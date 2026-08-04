@@ -147,11 +147,13 @@ class AiClient {
 	// ---------------- بدنه‌ی Anthropic ----------------
 
 	private fun anthropicContent(m: ChatMessage): JsonElement = buildJsonArray {
+		var anyAdded = false
 		if (m.activeText.isNotBlank()) {
 			add(buildJsonObject {
 				put("type", "text")
 				put("text", m.activeText)
 			})
+			anyAdded = true
 		}
 		for (a in m.attachments) {
 			val dataUrl = a.dataUrl
@@ -198,8 +200,10 @@ class AiClient {
 					put("text", "[فایل پیوست: " + a.name + " (" + a.mimeType + ")]")
 				})
 			}
+		} else if (m.attachments.isNotEmpty()) {
+			anyAdded = true
 		}
-		if (isEmpty()) {
+		if (!anyAdded) {
 			add(buildJsonObject {
 				put("type", "text")
 				put("text", ".")

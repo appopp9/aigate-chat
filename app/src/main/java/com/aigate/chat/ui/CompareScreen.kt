@@ -205,7 +205,7 @@ private fun SidePicker(
 private fun ResultColumn(
 	title: String,
 	text: String,
-	error: String,
+	error: String?,
 	running: Boolean,
 	tokens: Int,
 	cost: Double,
@@ -245,7 +245,7 @@ private fun ResultColumn(
 						style = MaterialTheme.typography.bodySmall,
 						color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
 					)
-				} else if (error.isNotBlank()) {
+				} else if (!error.isNullOrBlank()) {
 					Text(
 						text = error,
 						style = MaterialTheme.typography.bodySmall,
