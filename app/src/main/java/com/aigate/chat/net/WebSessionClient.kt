@@ -19,11 +19,10 @@ import kotlin.coroutines.resume
 
 /**
  * halate sevvom: goftogoo az tarighe neshaste morourgar (WebView).
- * karbar yek bar dar safheye "vorood be site" login mikonad, cookie ha zakhire mishavand
- * va bad az an har payam be sooratee khodkar dar site type va ersal mishavad
- * va pasokh az DOM khande mishavad.
  *
- * hoshdar: in ravesh be sakhtare HTML site vabaste ast va mitavanad ba har taghire site beshkanad.
+ * nokteye mohem: WebView bayad be panjere vasl bashad, vagarna Chromium
+ * requestAnimationFrame ra ejra nemikonad va site (React) hargez hydrate nemishavad.
+ * baraye hamin MainActivity yek WebView makhfi (1dp) misazad va inja sabt mikonad.
  */
 object WebSessionClient {
 
@@ -33,8 +32,11 @@ object WebSessionClient {
 		"Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
 			"Chrome/124.0.0.0 Mobile Safari/537.36"
 
-	private var headless: WebView? = null
-	private var loadedUrl: String = ""
+	private var host: WebView? = null
+	private var fallback: WebView? = null
+	private var lastLog: String = ""
+
+	fun log(): String = lastLog
 
 	@SuppressLint("SetJavaScriptEnabled")
 	fun configure(view: WebView) {
@@ -45,6 +47,7 @@ object WebSessionClient {
 		settings.userAgentString = USER_AGENT
 		settings.loadsImagesAutomatically = true
 		settings.mediaPlaybackRequiresUserGesture = true
+		settings.javaScriptCanOpenWindowsAutomatically = true
 		settings.cacheMode = WebSettings.LOAD_DEFAULT
 		settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 		view.webChromeClient = WebChromeClient()
@@ -54,27 +57,50 @@ object WebSessionClient {
 		cookies.setAcceptThirdPartyCookies(view, true)
 	}
 
+	/** WebView makhfi va vasl-shode be panjere ra sabt mikonad. */
+	fun attachHost(view: WebView) {
+		host = view
+	}
+
+	fun detachHost(view: WebView) {
+		if (host === view) host = null
+	}
+
 	fun persistCookies() {
 		CookieManager.getInstance().flush()
 	}
 
 	private suspend fun webView(context: Context, url: String): WebView =
 		withContext(Dispatchers.Main) {
-			val existing = headless
-			val view = if (existing != null) {
-				existing
+			val attached = host
+			val view = if (attached != null) {
+				attached
 			} else {
-				val created = WebView(context.applicationContext)
-				configure(created)
-				headless = created
-				created
+				val existing = fallback
+				if (existing != null) {
+					existing
+				} else {
+					val created = WebView(context.applicationContext)
+					configure(created)
+					fallback = created
+					created
+				}
 			}
-			if (loadedUrl != url) {
-				loadedUrl = url
-				view.loadUrl(url)
-			}
+			val currentUrl = view.url
+			val needsLoad = currentUrl.isNullOrBlank() ||
+				currentUrl == "about:blank" ||
+				!sameHost(currentUrl, url)
+			if (needsLoad) view.loadUrl(url)
 			view
 		}
+
+	private fun sameHost(a: String, b: String): Boolean {
+		fun hostOf(value: String): String {
+			val withoutScheme = value.substringAfter("//", value)
+			return withoutScheme.substringBefore("/").lowercase()
+		}
+		return hostOf(a) == hostOf(b)
+	}
 
 	private suspend fun eval(view: WebView, script: String): String =
 		withContext(Dispatchers.Main) {
@@ -111,7 +137,7 @@ object WebSessionClient {
 		return "\"" + escaped + "\""
 	}
 
-	/** script paye ke tavabe komaki ra roye safhe nasb mikonad. */
+	/** tavabe komaki ra roye safhe nasb mikonad. */
 	private val BOOTSTRAP = """
 (function(){
   function inputEl(){
@@ -121,7 +147,7 @@ object WebSessionClient {
   }
   function nodes(){
     var list = document.querySelectorAll('div.ds-markdown');
-    if (list.length === 0) { list = document.querySelectorAll('div[class*="markdown"]'); }
+    if (list.length === 0){ list = document.querySelectorAll('div[class*="markdown"]'); }
     return list;
   }
   function nodeText(root){
@@ -155,6 +181,13 @@ object WebSessionClient {
     return out;
   }
   window.__aigateReady = function(){ return inputEl() ? '1' : '0'; };
+  window.__aigateDiag = function(){
+    var el = inputEl();
+    return 'url=' + location.href
+      + ' | input=' + (el ? el.tagName : 'none')
+      + ' | blocks=' + nodes().length
+      + ' | buttons=' + document.querySelectorAll('div[role="button"], button').length;
+  };
   window.__aigateCount = function(){ return String(nodes().length); };
   window.__aigateText = function(){
     var list = nodes();
@@ -164,60 +197,83 @@ object WebSessionClient {
   window.__aigateBusy = function(){
     var all = document.querySelectorAll('div[role="button"], button, [aria-label]');
     for (var i = 0; i < all.length; i++){
-      var label = (all[i].getAttribute('aria-label') || '') + ' ' + (all[i].className || '');
-      if (label.toLowerCase().indexOf('stop') >= 0){ return '1'; }
+      var label = ((all[i].getAttribute('aria-label') || '') + ' ' + (all[i].className || '')).toLowerCase();
+      if (label.indexOf('stop') >= 0){ return '1'; }
     }
     return '0';
   };
-  window.__aigateDeepThink = function(on){
-    var all = document.querySelectorAll('div[role="button"], button, span');
-    for (var i = 0; i < all.length; i++){
-      var text = (all[i].innerText || '').toLowerCase();
-      if (text.indexOf('deepthink') >= 0 || text.indexOf('deep think') >= 0){
-        var active = (all[i].className || '').toLowerCase().indexOf('active') >= 0
-          || all[i].getAttribute('aria-pressed') === 'true';
-        if ((on === '1' && !active) || (on === '0' && active)){ all[i].click(); }
-        return 'toggled';
-      }
-    }
-    return 'not-found';
+  window.__aigateValue = function(){
+    var el = inputEl();
+    if (!el){ return ''; }
+    return (el.tagName === 'TEXTAREA' ? (el.value || '') : (el.innerText || ''));
   };
-  window.__aigateSend = function(text){
+  window.__aigateType = function(text){
     var el = inputEl();
     if (!el){ return 'no-input'; }
     el.focus();
+    el.click();
     if (el.tagName === 'TEXTAREA'){
       var desc = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
       if (desc && desc.set){ desc.set.call(el, text); } else { el.value = text; }
-      el.dispatchEvent(new Event('input', { bubbles: true }));
     } else {
       el.innerText = text;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    setTimeout(function(){
-      var clicked = false;
-      var btns = document.querySelectorAll('div[role="button"], button');
-      for (var i = btns.length - 1; i >= 0; i--){
-        var b = btns[i];
-        var label = ((b.getAttribute('aria-label') || '') + ' ' + (b.className || '')).toLowerCase();
-        if (label.indexOf('send') >= 0 || label.indexOf('submit') >= 0){
-          b.click();
-          clicked = true;
-          break;
-        }
-      }
-      if (!clicked){
-        var down = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
-        el.dispatchEvent(down);
-        var up = new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true });
-        el.dispatchEvent(up);
-      }
-    }, 150);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
     return 'ok';
+  };
+  window.__aigateEnter = function(){
+    var el = inputEl();
+    if (!el){ return 'no-input'; }
+    el.focus();
+    var opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+    el.dispatchEvent(new KeyboardEvent('keydown', opts));
+    el.dispatchEvent(new KeyboardEvent('keypress', opts));
+    el.dispatchEvent(new KeyboardEvent('keyup', opts));
+    return 'ok';
+  };
+  window.__aigateClickSend = function(){
+    var el = inputEl();
+    var scope = document;
+    if (el){
+      var p = el.parentElement;
+      for (var d = 0; d < 5 && p; d++){ p = p.parentElement; }
+      if (p){ scope = p; }
+    }
+    var cands = scope.querySelectorAll('div[role="button"], button, [aria-disabled]');
+    var labelled = null;
+    for (var i = 0; i < cands.length; i++){
+      var label = ((cands[i].getAttribute('aria-label') || '') + ' ' + (cands[i].className || '')).toLowerCase();
+      if (label.indexOf('send') >= 0 || label.indexOf('submit') >= 0){ labelled = cands[i]; }
+    }
+    if (labelled){ labelled.click(); return 'clicked-label'; }
+    var last = null;
+    for (var j = 0; j < cands.length; j++){
+      var c = cands[j];
+      if (c.getAttribute('aria-disabled') === 'true'){ continue; }
+      if (c.querySelector('svg') || c.getAttribute('role') === 'button'){ last = c; }
+    }
+    if (last){ last.click(); return 'clicked-last'; }
+    return 'no-button';
   };
   return 'installed';
 })();
 """
+
+	private suspend fun install(view: WebView) {
+		eval(view, BOOTSTRAP)
+	}
+
+	private suspend fun waitReady(view: WebView, timeoutMs: Int): Boolean {
+		var waited = 0
+		while (waited < timeoutMs) {
+			install(view)
+			if (eval(view, "window.__aigateReady()") == "1") return true
+			delay(600)
+			waited += 600
+		}
+		return false
+	}
 
 	private fun promptFor(history: List<ChatMessage>): String {
 		val last = history.lastOrNull { it.role == "user" }
@@ -230,21 +286,17 @@ object WebSessionClient {
 		val url = provider.baseUrl.ifBlank { DEFAULT_SITE }
 		return try {
 			val view = webView(context, url)
-			var ready = false
-			var waited = 0
-			while (waited < 25000) {
-				eval(view, BOOTSTRAP)
-				if (eval(view, "window.__aigateReady()") == "1") {
-					ready = true
-					break
-				}
-				delay(700)
-				waited += 700
-			}
+			val ready = waitReady(view, 30000)
+			val diag = eval(view, "window.__aigateDiag()")
+			lastLog = diag
 			if (ready) {
 				PingResult(true, System.currentTimeMillis() - start, "نشست وب فعال است")
 			} else {
-				PingResult(false, System.currentTimeMillis() - start, "وارد حساب نشده‌ای — از دکمه «ورود به سایت» لاگین کن")
+				PingResult(
+					false,
+					System.currentTimeMillis() - start,
+					"کادر چت پیدا نشد — احتمالاً لاگین نشده‌ای یا کپچا باز است. " + diag,
+				)
 			}
 		} catch (t: Throwable) {
 			PingResult(false, System.currentTimeMillis() - start, t.message ?: "خطای وب‌ویو")
@@ -266,23 +318,12 @@ object WebSessionClient {
 		val url = provider.baseUrl.ifBlank { DEFAULT_SITE }
 		val view = webView(context, url)
 
-		// montazer mimanim ta safhe amade shavad
-		var ready = false
-		var waited = 0
-		while (waited < 30000) {
-			eval(view, BOOTSTRAP)
-			if (eval(view, "window.__aigateReady()") == "1") {
-				ready = true
-				break
-			}
-			delay(700)
-			waited += 700
-		}
-		if (!ready) {
+		if (!waitReady(view, 40000)) {
+			val diag = eval(view, "window.__aigateDiag()")
+			lastLog = diag
 			emit(
 				StreamEvent.Failure(
-					"صفحه‌ی سایت آماده نشد. یا لاگین نکرده‌ای یا کپچا نشان داده شده — " +
-						"از بخش API‌ها دکمه «ورود به سایت» را بزن"
+					"صفحه‌ی سایت آماده نشد. از بخش API‌ها دکمه‌ی «ورود به سایت» را بزن و مطمئن شو لاگین هستی. " + diag
 				)
 			)
 			return@flow
@@ -291,16 +332,46 @@ object WebSessionClient {
 		val wantsDeepThink = model.contains("R1", ignoreCase = true) ||
 			model.contains("reason", ignoreCase = true) ||
 			model.contains("think", ignoreCase = true)
-		eval(view, "window.__aigateDeepThink('" + (if (wantsDeepThink) "1" else "0") + "')")
-		delay(250)
+		if (wantsDeepThink) {
+			eval(view, "window.__aigateDeepThink ? window.__aigateDeepThink('1') : ''")
+			delay(250)
+		}
 
 		val baseCount = eval(view, "window.__aigateCount()").toIntOrNull() ?: 0
-		val sendResult = eval(view, "window.__aigateSend(" + jsString(prompt) + ")")
-		if (sendResult != "ok") {
-			emit(StreamEvent.Failure("کادر نوشتن پیام در سایت پیدا نشد (ساختار سایت تغییر کرده)"))
+
+		// 1) neveshtan dar kadr
+		val typed = eval(view, "window.__aigateType(" + jsString(prompt) + ")")
+		delay(300)
+		if (typed != "ok" || eval(view, "window.__aigateValue()").isBlank()) {
+			val diag = eval(view, "window.__aigateDiag()")
+			lastLog = diag
+			emit(StreamEvent.Failure("نمی‌توانم در کادر چت سایت بنویسم. " + diag))
 			return@flow
 		}
 
+		// 2) Enter, va agar kar nakard click roye dokmeye ersal
+		eval(view, "window.__aigateEnter()")
+		delay(700)
+		var sent = eval(view, "window.__aigateValue()").isBlank()
+		if (!sent) {
+			val clicked = eval(view, "window.__aigateClickSend()")
+			delay(900)
+			sent = eval(view, "window.__aigateValue()").isBlank()
+			if (!sent) {
+				eval(view, "window.__aigateEnter()")
+				delay(900)
+				sent = eval(view, "window.__aigateValue()").isBlank()
+			}
+			lastLog = "click=" + clicked + " | " + eval(view, "window.__aigateDiag()")
+		}
+		if (!sent) {
+			val diag = eval(view, "window.__aigateDiag()")
+			lastLog = diag
+			emit(StreamEvent.Failure("دکمه‌ی ارسال سایت پیدا نشد (ساختار سایت عوض شده). " + diag))
+			return@flow
+		}
+
+		// 3) khandane pasokh
 		var emitted = ""
 		var stableFor = 0
 		var elapsed = 0
@@ -311,7 +382,8 @@ object WebSessionClient {
 			val count = eval(view, "window.__aigateCount()").toIntOrNull() ?: 0
 			if (count <= baseCount) {
 				if (elapsed > 60000) {
-					emit(StreamEvent.Failure("سایت پاسخی تولید نکرد"))
+					lastLog = eval(view, "window.__aigateDiag()")
+					emit(StreamEvent.Failure("پیام ارسال شد ولی سایت پاسخی نشان نداد. " + lastLog))
 					return@flow
 				}
 				continue
@@ -331,8 +403,11 @@ object WebSessionClient {
 				stableFor += 450
 			}
 			val busy = eval(view, "window.__aigateBusy()") == "1"
-			if (!busy && stableFor >= 1800) break
-			if (busy) stableFor = 0
+			if (busy) {
+				stableFor = 0
+			} else if (stableFor >= 1800) {
+				break
+			}
 			if (stableFor >= 6000) break
 		}
 		persistCookies()
@@ -367,9 +442,8 @@ object WebSessionClient {
 	}
 
 	fun release() {
-		val view = headless
-		headless = null
-		loadedUrl = ""
+		val view = fallback
+		fallback = null
 		view?.destroy()
 	}
 }
