@@ -1,0 +1,6 @@
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.**
+-keepclassmembers class kotlinx.serialization.json.** { *; }
+-keep,includedescriptorclasses class com.aigate.chat.model.** { *; }
+-dontwarn okhttp3.**
+-dontwarn okio.**

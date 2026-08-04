@@ -1,0 +1,52 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Generate Gradle wrapper if missing
+        run: |
+          if [ ! -f gradlew ]; then
+            gradle wrapper --gradle-version 8.11.1
+          fi
+          chmod +x gradlew
+
+      - name: Build debug + release
+        run: ./gradlew assembleDebug assembleRelease --stacktrace
+
+      - name: Create keystore and sign APKs
+        run: |
+          keytool -genkeypair -v -keystore ci.keystore -storepass android -keypass android \
+            -alias ci -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=AiGate, OU=Dev, O=AiGate, L=Tehran, S=Tehran, C=IR"
+          BT=$(ls $ANDROID_HOME/build-tools | sort -V | tail -n 1)
+          APKSIGNER="$ANDROID_HOME/build-tools/$BT/apksigner"
+          for APK in $(find app/build/outputs/apk -name "*.apk"); do
+            $APKSIGNER sign --ks ci.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias ci "$APK"
+            $APKSIGNER verify "$APK"
+          done
+          if [ -f app/build/outputs/apk/release/app-release-unsigned.apk ]; then
+            mv app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/app-release.apk
+          fi
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: apks
+          path: app/build/outputs/apk/**/*.apk
