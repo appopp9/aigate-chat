@@ -200,7 +200,8 @@ class AiClient {
 					put("text", "[فایل پیوست: " + a.name + " (" + a.mimeType + ")]")
 				})
 			}
-		} else if (m.attachments.isNotEmpty()) {
+		}
+		if (m.attachments.isNotEmpty()) {
 			anyAdded = true
 		}
 		if (!anyAdded) {
