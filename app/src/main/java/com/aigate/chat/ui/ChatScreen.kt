@@ -99,9 +99,9 @@ import com.aigate.chat.model.ChatMessage
 import com.aigate.chat.model.ConnectionState
 import com.aigate.chat.model.Conversation
 import com.aigate.chat.model.FontScale
-import com.aigate.chat.model.Persona
 import com.aigate.chat.model.Provider
 import com.aigate.chat.model.ProviderStatus
+import com.aigate.chat.ui.components.LocalFlatStyle
 import com.aigate.chat.ui.components.NeoBox
 import com.aigate.chat.ui.components.NeoButton
 import com.aigate.chat.ui.components.NeoChip
@@ -122,8 +122,6 @@ fun ChatScreen(
 	onOpenSettings: () -> Unit,
 	onOpenCompare: () -> Unit,
 	onOpenSearch: () -> Unit = {},
-	onOpenPrompts: () -> Unit = {},
-	onOpenPersonas: () -> Unit = {},
 ) {
 	val state by viewModel.state.collectAsStateCompat()
 	val context = LocalContext.current
@@ -139,13 +137,10 @@ fun ChatScreen(
 	var showOverflow by remember { mutableStateOf(false) }
 	var showExportMenu by remember { mutableStateOf(false) }
 	var showStatusSheet by remember { mutableStateOf(false) }
-	var showPromptSheet by remember { mutableStateOf(false) }
-	var showPersonaSheet by remember { mutableStateOf(false) }
 	var selectedMessageId by remember { mutableStateOf("") }
 
 	val conversation = state.current
 	val provider = state.providerOf(conversation)
-	val persona = state.personaOf(conversation)
 	val accent = AccentPalette[(provider?.colorIndex ?: 0) % AccentPalette.size]
 
 	val filePicker = rememberLauncherForActivityResult(
@@ -221,7 +216,7 @@ fun ChatScreen(
 					NeoIconButton(
 						icon = Icons.Filled.Menu,
 						boxSize = 48.dp,
-						contentDescription = "menu",
+						contentDescription = "منو",
 						onClick = {
 							haptics.tap()
 							scope.launch { drawerState.open() }
@@ -253,8 +248,8 @@ fun ChatScreen(
 								)
 								Spacer(Modifier.width(6.dp))
 								NeoChip(
-									text = conversation?.model?.ifBlank { "model entekhab kon" }
-										?: "model entekhab kon",
+									text = conversation?.model?.ifBlank { "انتخاب مدل" }
+										?: "انتخاب مدل",
 									icon = Icons.Filled.KeyboardArrowDown,
 									color = accent,
 									onClick = {
@@ -282,7 +277,7 @@ fun ChatScreen(
 						NeoIconButton(
 							icon = Icons.Filled.MoreVert,
 							boxSize = 48.dp,
-							contentDescription = "more",
+							contentDescription = "بیشتر",
 							onClick = {
 								haptics.tap()
 								showOverflow = true
@@ -290,49 +285,35 @@ fun ChatScreen(
 						)
 						DropdownMenu(expanded = showOverflow, onDismissRequest = { showOverflow = false }) {
 							DropdownMenuItem(
-								text = { Text("goftogooye jadid") },
+								text = { Text("گفت‌وگوی جدید") },
 								onClick = {
 									showOverflow = false
 									viewModel.newConversation()
 								},
 							)
 							DropdownMenuItem(
-								text = { Text("jost-o-jooye sartasari") },
+								text = { Text("جست‌وجوی سرتاسری") },
 								onClick = {
 									showOverflow = false
 									onOpenSearch()
 								},
 							)
 							DropdownMenuItem(
-								text = { Text("prompt haye amade") },
-								onClick = {
-									showOverflow = false
-									onOpenPrompts()
-								},
-							)
-							DropdownMenuItem(
-								text = { Text("naghsh ha") },
-								onClick = {
-									showOverflow = false
-									onOpenPersonas()
-								},
-							)
-							DropdownMenuItem(
-								text = { Text("moghayeseye do model") },
+								text = { Text("مقایسه دو مدل") },
 								onClick = {
 									showOverflow = false
 									onOpenCompare()
 								},
 							)
 							DropdownMenuItem(
-								text = { Text("khorooji gereftan") },
+								text = { Text("خروجی گرفتن") },
 								onClick = {
 									showOverflow = false
 									showExportMenu = true
 								},
 							)
 							DropdownMenuItem(
-								text = { Text("tanzimat") },
+								text = { Text("تنزیمات") },
 								onClick = {
 									showOverflow = false
 									onOpenSettings()
@@ -357,7 +338,7 @@ fun ChatScreen(
 								},
 							)
 							DropdownMenuItem(
-								text = { Text("matne sade") },
+								text = { Text("متن ساده") },
 								onClick = {
 									showExportMenu = false
 									val id = conversation?.id
@@ -368,7 +349,7 @@ fun ChatScreen(
 					}
 				}
 
-				// ---------- navare naghsh va payam haye pin shode ----------
+				// ---------- navare naghsh va پیام haye pin shode ----------
 				Row(
 					modifier = Modifier
 						.fillMaxWidth()
@@ -377,15 +358,6 @@ fun ChatScreen(
 					horizontalArrangement = Arrangement.spacedBy(6.dp),
 					verticalAlignment = Alignment.CenterVertically,
 				) {
-					NeoChip(
-						text = if (persona == null) "bedoone naghsh" else persona.emoji + " " + persona.name,
-						icon = Icons.Filled.Face,
-						color = MaterialTheme.colorScheme.secondaryContainer,
-						onClick = {
-							haptics.tap()
-							showPersonaSheet = true
-						},
-					)
 					val pinned = conversation?.messages?.filter { it.pinned } ?: emptyList()
 					for (message in pinned) {
 						NeoChip(
@@ -397,7 +369,7 @@ fun ChatScreen(
 					}
 				}
 
-				// ---------- payam ha ----------
+				// ---------- پیام ha ----------
 				LazyColumn(
 					state = listState,
 					modifier = Modifier
@@ -413,7 +385,7 @@ fun ChatScreen(
 								hasProvider = provider != null,
 								modelName = conversation?.model.orEmpty(),
 								accent = accent,
-								suggestions = state.prompts.take(3).map { it.title to it.body },
+								suggestions = defaultSuggestions(),
 								onSuggestion = { body -> input = body },
 								onOpenProviders = onOpenProviders,
 							)
@@ -440,7 +412,7 @@ fun ChatScreen(
 							onCopy = {
 								haptics.tap()
 								copyToClipboard(context, message.activeText)
-								viewModel.showToast("copy shod")
+								viewModel.showToast("کپی شد")
 							},
 							onEdit = {
 								haptics.tap()
@@ -524,7 +496,7 @@ fun ChatScreen(
 							horizontalArrangement = Arrangement.spacedBy(6.dp),
 						) {
 							NeoChip(
-								text = TokenCounter.formatTokens(conversation.totalTokens) + " token · " +
+								text = TokenCounter.formatTokens(conversation.totalTokens) + " توکن · " +
 									TokenCounter.formatCost(conversation.totalCost),
 								color = MaterialTheme.colorScheme.surface,
 							)
@@ -532,7 +504,7 @@ fun ChatScreen(
 							if (budget > 0.0) {
 								val percent = ((state.monthCost / budget) * 100).toInt()
 								NeoChip(
-									text = "budje: " + percent + "%",
+									text = "بودجه: " + percent + "%",
 									color = if (percent >= state.settings.budgetWarnPercent) {
 										MaterialTheme.colorScheme.errorContainer
 									} else {
@@ -546,7 +518,7 @@ fun ChatScreen(
 						NeoIconButton(
 							icon = Icons.Filled.AttachFile,
 							boxSize = 48.dp,
-							contentDescription = "file",
+							contentDescription = "فایل",
 							onClick = {
 								haptics.tap()
 								filePicker.launch(arrayOf("*/*"))
@@ -556,21 +528,10 @@ fun ChatScreen(
 						NeoIconButton(
 							icon = Icons.Filled.Image,
 							boxSize = 48.dp,
-							contentDescription = "image",
+							contentDescription = "عکس",
 							onClick = {
 								haptics.tap()
 								imagePicker.launch(arrayOf("image/*"))
-							},
-						)
-						Spacer(Modifier.width(6.dp))
-						NeoIconButton(
-							icon = Icons.Filled.Lightbulb,
-							boxSize = 48.dp,
-							containerColor = MaterialTheme.colorScheme.secondaryContainer,
-							contentDescription = "prompt ha",
-							onClick = {
-								haptics.tap()
-								showPromptSheet = true
 							},
 						)
 						Spacer(Modifier.width(6.dp))
@@ -578,7 +539,7 @@ fun ChatScreen(
 							NeoTextField(
 								value = input,
 								onValueChange = { input = it },
-								placeholder = "payamet ra benevis…",
+								placeholder = "پیامت را بنویس…",
 								modifier = Modifier.fillMaxWidth(),
 							)
 						}
@@ -589,7 +550,7 @@ fun ChatScreen(
 								boxSize = 48.dp,
 								containerColor = MaterialTheme.colorScheme.error,
 								contentColor = MaterialTheme.colorScheme.onError,
-								contentDescription = "stop",
+								contentDescription = "توقف",
 								onClick = {
 									haptics.strong()
 									viewModel.stopGeneration()
@@ -600,7 +561,7 @@ fun ChatScreen(
 								icon = Icons.Filled.Send,
 								boxSize = 48.dp,
 								containerColor = accent,
-								contentDescription = "send",
+								contentDescription = "ارسال",
 								onClick = {
 									haptics.strong()
 									val text = input
@@ -667,37 +628,7 @@ fun ChatScreen(
 		)
 	}
 
-	if (showPromptSheet) {
-		PromptPickerDialog(
-			prompts = state.prompts.map { it.title to it.body },
-			onPick = { body ->
-				input = if (input.isBlank()) body else input + "\n" + body
-				showPromptSheet = false
-			},
-			onManage = {
-				showPromptSheet = false
-				onOpenPrompts()
-			},
-			onDismiss = { showPromptSheet = false },
-		)
-	}
 
-	if (showPersonaSheet) {
-		PersonaPickerDialog(
-			personas = state.personas,
-			selectedId = conversation?.personaId.orEmpty(),
-			onPick = { id ->
-				val conversationId = conversation?.id
-				if (conversationId != null) viewModel.applyPersona(conversationId, id)
-				showPersonaSheet = false
-			},
-			onManage = {
-				showPersonaSheet = false
-				onOpenPersonas()
-			},
-			onDismiss = { showPersonaSheet = false },
-		)
-	}
 }
 
 // ---------------- helper ha ----------------
@@ -713,10 +644,11 @@ private fun DateSeparator(timestamp: Long) {
 	val today = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
 	val day = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(timestamp))
 	val label = if (day == today) {
-		"emrooz"
+		"امروز"
 	} else {
 		SimpleDateFormat("yyyy/MM/dd", Locale.US).format(Date(timestamp))
 	}
+	val flat = LocalFlatStyle.current
 	Row(
 		modifier = Modifier.fillMaxWidth(),
 		horizontalArrangement = Arrangement.Center,
@@ -725,15 +657,21 @@ private fun DateSeparator(timestamp: Long) {
 		Box(
 			modifier = Modifier
 				.weight(1f)
-				.height(3.dp)
-				.background(MaterialTheme.colorScheme.outline)
+				.height(if (flat) 1.dp else 3.dp)
+				.background(
+					if (flat) MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+					else MaterialTheme.colorScheme.outline
+				)
 		)
 		NeoChip(text = label, modifier = Modifier.padding(horizontal = 8.dp))
 		Box(
 			modifier = Modifier
 				.weight(1f)
-				.height(3.dp)
-				.background(MaterialTheme.colorScheme.outline)
+				.height(if (flat) 1.dp else 3.dp)
+				.background(
+					if (flat) MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
+					else MaterialTheme.colorScheme.outline
+				)
 		)
 	}
 }
@@ -795,7 +733,7 @@ private fun ModelPickerMenu(
 ) {
 	DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
 		if (providers.isEmpty()) {
-			DropdownMenuItem(text = { Text("hanooz API ezafe nakardi") }, onClick = onDismiss)
+			DropdownMenuItem(text = { Text("هنوز API اضافه نکردی") }, onClick = onDismiss)
 		}
 		for (provider in providers) {
 			DropdownMenuItem(
@@ -855,16 +793,16 @@ private fun EmptyState(
 		Spacer(Modifier.height(12.dp))
 		Text(
 			text = if (hasProvider) {
-				if (modelName.isBlank()) "yek model entekhab kon" else "model: " + modelName
+				if (modelName.isBlank()) "یک مدل انتخاب کن" else "مدل: " + modelName
 			} else {
-				"aval yek API ezafe kon"
+				"اول یک API اضافه کن"
 			},
 			style = MaterialTheme.typography.bodyLarge,
 			color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.75f),
 		)
 		if (!hasProvider) {
 			Spacer(Modifier.height(14.dp))
-			NeoButton(text = "ezafe kardane API", onClick = onOpenProviders, icon = Icons.Filled.Storage)
+			NeoButton(text = "افزودن API", onClick = onOpenProviders, icon = Icons.Filled.Storage)
 		} else if (suggestions.isNotEmpty()) {
 			Spacer(Modifier.height(16.dp))
 			Column(
@@ -894,7 +832,7 @@ private fun TypingIndicator() {
 		label = "typingAlpha",
 	)
 	Row(modifier = Modifier.padding(start = 4.dp)) {
-		NeoChip(text = "dar hale neveshtan…", modifier = Modifier.alpha(alpha))
+		NeoChip(text = "در حال نوشتن…", modifier = Modifier.alpha(alpha))
 	}
 }
 
@@ -994,7 +932,7 @@ private fun MessageBubble(
 						Spacer(Modifier.height(4.dp))
 						Text(
 							text = TokenCounter.formatTokens(message.promptTokens + message.completionTokens) +
-								" token · " + TokenCounter.formatCost(message.costUsd),
+								" توکن · " + TokenCounter.formatCost(message.costUsd),
 							style = MaterialTheme.typography.labelSmall,
 							color = textColor.copy(alpha = 0.6f),
 						)
@@ -1006,7 +944,7 @@ private fun MessageBubble(
 		if (!isUser && message.truncated && message.error == null) {
 			Spacer(Modifier.height(6.dp))
 			NeoButton(
-				text = "edameye pasokh",
+				text = "ادامه‌ی پاسخ",
 				icon = Icons.Filled.PlayArrow,
 				containerColor = MaterialTheme.colorScheme.secondaryContainer,
 				onClick = onContinue,
@@ -1116,18 +1054,18 @@ private fun ErrorCard(error: String, onRetry: () -> Unit, onChangeModel: () -> U
 			Spacer(Modifier.height(8.dp))
 			Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
 				NeoChip(
-					text = "talashe dobare",
+					text = "تلاش دوباره",
 					icon = Icons.Filled.Refresh,
 					color = MaterialTheme.colorScheme.surface,
 					onClick = onRetry,
 				)
 				NeoChip(
-					text = "taghire model",
+					text = "تغییر مدل",
 					color = MaterialTheme.colorScheme.surface,
 					onClick = onChangeModel,
 				)
 				NeoChip(
-					text = if (showDetails) "bastane jozeiat" else "jozeiate fanni",
+					text = if (showDetails) "بستن جزئیات" else "جزئیات فنی",
 					color = MaterialTheme.colorScheme.surface,
 					onClick = { showDetails = !showDetails },
 				)
@@ -1148,13 +1086,13 @@ private fun friendlyError(error: String): String {
 	val low = error.lowercase()
 	return when {
 		low.contains("do_request_failed") || low.contains("upstream error") ->
-			"in model rooye server dar dastres nist — model digari entekhab kon"
-		low.contains("http 401") || low.contains("http 403") -> "kelide API motabar nist"
-		low.contains("http 404") -> "Base URL ya name model eshtebah ast"
-		low.contains("http 429") -> "mahdoodiate nerkh ya etmame etebar"
-		low.contains("timeout") -> "server javab nadad (timeout)"
-		low.contains("model entekhab nashode") -> "aval yek model entekhab kon"
-		else -> "darkhast na-movafagh bood"
+			"این مدل روی سرور در دسترس نیست — مدل دیگری انتخاب کن"
+		low.contains("http 401") || low.contains("http 403") -> "کلید API معتبر نیست"
+		low.contains("http 404") -> "Base URL یا نام مدل اشتباه است"
+		low.contains("http 429") -> "محدودیت نرخ یا اتمام اعتبار"
+		low.contains("timeout") -> "سرور جواب نداد (تایم‌اوت)"
+		low.contains("مدل انتخاب نشده") -> "اول یک مدل انتخاب کن"
+		else -> "درخواست ناموفق بود"
 	}
 }
 
@@ -1169,19 +1107,19 @@ private fun StatusDialog(
 		NeoBox(modifier = Modifier.fillMaxWidth(), background = MaterialTheme.colorScheme.surface) {
 			Column(modifier = Modifier.padding(14.dp)) {
 				Text(
-					text = providerName.ifBlank { "API entekhab nashode" },
+					text = providerName.ifBlank { "API انتخاب نشده" },
 					style = MaterialTheme.typography.titleMedium,
 					fontWeight = FontWeight.Bold,
 					color = MaterialTheme.colorScheme.onSurface,
 				)
 				Spacer(Modifier.height(8.dp))
 				Text(
-					text = "vaz'iat: " + status.state.name,
+					text = "وضعیت: " + status.state.name,
 					style = MaterialTheme.typography.bodyMedium,
 					color = MaterialTheme.colorScheme.onSurface,
 				)
 				Text(
-					text = "ta'khir: " + status.latencyMs + " ms",
+					text = "تأخیر: " + status.latencyMs + " میلی‌ثانیه",
 					style = MaterialTheme.typography.bodyMedium,
 					color = MaterialTheme.colorScheme.onSurface,
 				)
@@ -1195,157 +1133,7 @@ private fun StatusDialog(
 				}
 				Spacer(Modifier.height(12.dp))
 				Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-					NeoButton(text = "test dobare", icon = Icons.Filled.Refresh, onClick = onRetest)
-					NeoButton(
-						text = "bastan",
-						icon = Icons.Filled.Close,
-						containerColor = MaterialTheme.colorScheme.surfaceVariant,
-						onClick = onDismiss,
-					)
-				}
-			}
-		}
-	}
-}
-
-@Composable
-private fun PromptPickerDialog(
-	prompts: List<Pair<String, String>>,
-	onPick: (String) -> Unit,
-	onManage: () -> Unit,
-	onDismiss: () -> Unit,
-) {
-	Dialog(onDismissRequest = onDismiss) {
-		NeoBox(modifier = Modifier.fillMaxWidth(), background = MaterialTheme.colorScheme.surface) {
-			Column(modifier = Modifier.padding(14.dp)) {
-				Text(
-					"prompt haye amade",
-					style = MaterialTheme.typography.titleMedium,
-					fontWeight = FontWeight.Bold,
-					color = MaterialTheme.colorScheme.onSurface,
-				)
-				Spacer(Modifier.height(10.dp))
-				Column(
-					modifier = Modifier
-						.fillMaxWidth()
-						.heightIn(max = 320.dp)
-						.verticalScroll(rememberScrollState()),
-					verticalArrangement = Arrangement.spacedBy(8.dp),
-				) {
-					if (prompts.isEmpty()) {
-						Text(
-							"hanooz prompti nasakhti",
-							style = MaterialTheme.typography.bodyMedium,
-							color = MaterialTheme.colorScheme.onSurface,
-						)
-					}
-					for (prompt in prompts) {
-						NeoBox(
-							modifier = Modifier.fillMaxWidth(),
-							background = MaterialTheme.colorScheme.surfaceVariant,
-							onClick = { onPick(prompt.second) },
-						) {
-							Column(modifier = Modifier.padding(10.dp)) {
-								Text(
-									text = prompt.first,
-									style = MaterialTheme.typography.labelLarge,
-									fontWeight = FontWeight.Bold,
-									color = MaterialTheme.colorScheme.onSurface,
-								)
-								Text(
-									text = prompt.second.take(70).replace('\n', ' '),
-									style = MaterialTheme.typography.bodySmall,
-									color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-								)
-							}
-						}
-					}
-				}
-				Spacer(Modifier.height(12.dp))
-				Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-					NeoButton(text = "modiriat", icon = Icons.Filled.Edit, onClick = onManage)
-					NeoButton(
-						text = "bastan",
-						icon = Icons.Filled.Close,
-						containerColor = MaterialTheme.colorScheme.surfaceVariant,
-						onClick = onDismiss,
-					)
-				}
-			}
-		}
-	}
-}
-
-@Composable
-private fun PersonaPickerDialog(
-	personas: List<Persona>,
-	selectedId: String,
-	onPick: (String) -> Unit,
-	onManage: () -> Unit,
-	onDismiss: () -> Unit,
-) {
-	Dialog(onDismissRequest = onDismiss) {
-		NeoBox(modifier = Modifier.fillMaxWidth(), background = MaterialTheme.colorScheme.surface) {
-			Column(modifier = Modifier.padding(14.dp)) {
-				Text(
-					"naghshe in goftogoo",
-					style = MaterialTheme.typography.titleMedium,
-					fontWeight = FontWeight.Bold,
-					color = MaterialTheme.colorScheme.onSurface,
-				)
-				Spacer(Modifier.height(10.dp))
-				Column(
-					modifier = Modifier
-						.fillMaxWidth()
-						.heightIn(max = 320.dp)
-						.verticalScroll(rememberScrollState()),
-					verticalArrangement = Arrangement.spacedBy(8.dp),
-				) {
-					NeoBox(
-						modifier = Modifier.fillMaxWidth(),
-						background = if (selectedId.isBlank()) {
-							MaterialTheme.colorScheme.primaryContainer
-						} else {
-							MaterialTheme.colorScheme.surfaceVariant
-						},
-						onClick = { onPick("") },
-					) {
-						Text(
-							"bedoone naghsh",
-							modifier = Modifier.padding(10.dp),
-							style = MaterialTheme.typography.labelLarge,
-							color = MaterialTheme.colorScheme.onSurface,
-						)
-					}
-					for (persona in personas) {
-						NeoBox(
-							modifier = Modifier.fillMaxWidth(),
-							background = if (selectedId == persona.id) {
-								MaterialTheme.colorScheme.primaryContainer
-							} else {
-								MaterialTheme.colorScheme.surfaceVariant
-							},
-							onClick = { onPick(persona.id) },
-						) {
-							Column(modifier = Modifier.padding(10.dp)) {
-								Text(
-									text = persona.emoji + "  " + persona.name,
-									style = MaterialTheme.typography.labelLarge,
-									fontWeight = FontWeight.Bold,
-									color = MaterialTheme.colorScheme.onSurface,
-								)
-								Text(
-									text = persona.systemPrompt.take(70).replace('\n', ' '),
-									style = MaterialTheme.typography.bodySmall,
-									color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-								)
-							}
-						}
-					}
-				}
-				Spacer(Modifier.height(12.dp))
-				Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-					NeoButton(text = "modiriat", icon = Icons.Filled.Edit, onClick = onManage)
+					NeoButton(text = "تست دوباره", icon = Icons.Filled.Refresh, onClick = onRetest)
 					NeoButton(
 						text = "bastan",
 						icon = Icons.Filled.Close,
@@ -1369,7 +1157,7 @@ private fun EditMessageDialog(
 		NeoBox(modifier = Modifier.fillMaxWidth(), background = MaterialTheme.colorScheme.surface) {
 			Column(modifier = Modifier.padding(14.dp)) {
 				Text(
-					"virayeshe payam",
+					"ویرایش پیام",
 					style = MaterialTheme.typography.titleMedium,
 					fontWeight = FontWeight.Bold,
 					color = MaterialTheme.colorScheme.onSurface,
@@ -1378,7 +1166,7 @@ private fun EditMessageDialog(
 				NeoTextField(
 					value = text,
 					onValueChange = { text = it },
-					placeholder = "matne payam",
+					placeholder = "متن پیام",
 					modifier = Modifier
 						.fillMaxWidth()
 						.heightIn(min = 120.dp),
@@ -1386,12 +1174,12 @@ private fun EditMessageDialog(
 				Spacer(Modifier.height(12.dp))
 				Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
 					NeoButton(
-						text = "zakhire va pasokhe jadid",
+						text = "ذخیره و پاسخ جدید",
 						icon = Icons.Filled.Refresh,
 						onClick = { onSave(text, true) },
 					)
 					NeoButton(
-						text = "faghat zakhire",
+						text = "فقط ذخیره",
 						icon = Icons.Filled.Check,
 						containerColor = MaterialTheme.colorScheme.secondaryContainer,
 						onClick = { onSave(text, false) },
@@ -1414,7 +1202,7 @@ private fun FallbackDialog(
 		NeoBox(modifier = Modifier.fillMaxWidth(), background = MaterialTheme.colorScheme.surface) {
 			Column(modifier = Modifier.padding(14.dp)) {
 				Text(
-					"darkhast ba " + request.failedProviderName + " na-movafagh bood",
+					"درخواست با " + request.failedProviderName + " ناموفق بود",
 					style = MaterialTheme.typography.titleMedium,
 					fontWeight = FontWeight.Bold,
 					color = MaterialTheme.colorScheme.onSurface,
@@ -1427,7 +1215,7 @@ private fun FallbackDialog(
 				)
 				Spacer(Modifier.height(10.dp))
 				Text(
-					"ba yek API digar dobare talash konim? kodam API?",
+					"با یک API دیگر دوباره تلاش کنیم؟ کدام API؟",
 					style = MaterialTheme.typography.bodyMedium,
 					color = MaterialTheme.colorScheme.onSurface,
 				)
@@ -1461,7 +1249,7 @@ private fun FallbackDialog(
 									color = MaterialTheme.colorScheme.onSurface,
 								)
 								Text(
-									text = candidate.defaultModel.ifBlank { "bedoone modele pishfarz" },
+									text = candidate.defaultModel.ifBlank { "بدون مدل پیش‌فرض" },
 									style = MaterialTheme.typography.labelSmall,
 									color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
 								)
@@ -1472,7 +1260,7 @@ private fun FallbackDialog(
 				Spacer(Modifier.height(12.dp))
 				Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
 					NeoButton(
-						text = "bale, edame bede",
+						text = "بله، ادامه بده",
 						icon = Icons.Filled.Check,
 						enabled = selected != null,
 						onClick = {
@@ -1523,7 +1311,7 @@ private fun DrawerContent(
 		NeoTextField(
 			value = searchQuery,
 			onValueChange = onSearchQueryChange,
-			placeholder = "jost-o-joo dar goftogooha…",
+			placeholder = "جست‌وجو در گفت‌وگوها…",
 			modifier = Modifier.fillMaxWidth(),
 		)
 		Spacer(Modifier.height(10.dp))
@@ -1532,13 +1320,13 @@ private fun DrawerContent(
 				icon = Icons.Filled.Storage,
 				boxSize = 48.dp,
 				onClick = onOpenProviders,
-				contentDescription = "API ha",
+				contentDescription = "API ها",
 			)
 			NeoIconButton(
 				icon = Icons.Filled.Search,
 				boxSize = 48.dp,
 				onClick = onOpenSearch,
-				contentDescription = "jost-o-jooye sartasari",
+				contentDescription = "جست‌وجوی سرتاسری",
 			)
 			NeoIconButton(
 				icon = Icons.Filled.CompareArrows,
@@ -1551,21 +1339,21 @@ private fun DrawerContent(
 				icon = Icons.Filled.Settings,
 				boxSize = 48.dp,
 				onClick = onOpenSettings,
-				contentDescription = "tanzimat",
+				contentDescription = "تنزیمات",
 			)
 			NeoIconButton(
 				icon = Icons.Filled.Add,
 				boxSize = 48.dp,
 				containerColor = MaterialTheme.colorScheme.primaryContainer,
 				onClick = { viewModel.newConversation() },
-				contentDescription = "goftogooye jadid",
+				contentDescription = "گفت‌وگوی جدید",
 			)
 		}
 		Spacer(Modifier.height(12.dp))
 
 		if (searchQuery.trim().length >= 2) {
 			Text(
-				text = "natayej (" + hits.size + ")",
+				text = "نتایج (" + hits.size + ")",
 				style = MaterialTheme.typography.labelLarge,
 				color = MaterialTheme.colorScheme.onBackground,
 			)
@@ -1640,8 +1428,8 @@ private fun ConversationRow(
 					color = MaterialTheme.colorScheme.onSurface,
 				)
 				Text(
-					text = conversation.messages.size.toString() + " payam" +
-						(if (conversation.parentId != null) "  ·  shakhe" else ""),
+					text = conversation.messages.size.toString() + " پیام" +
+						(if (conversation.parentId != null) "  ·  شاخه" else ""),
 					style = MaterialTheme.typography.labelSmall,
 					color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
 				)
@@ -1670,3 +1458,9 @@ private fun ConversationRow(
 		}
 	}
 }
+
+private fun defaultSuggestions(): List<Pair<String, String>> = listOf(
+	"خلاصه کن" to "متن زیر را خلاصه کن:\n",
+	"ترجمه به فارسی" to "متن زیر را به فارسی روان ترجمه کن:\n",
+	"بازبینی کد" to "این کد را بازبینی کن و ایرادهایش را بگو:\n",
+)

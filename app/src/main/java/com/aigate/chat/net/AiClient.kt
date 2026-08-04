@@ -39,7 +39,7 @@ sealed interface StreamEvent {
 
 data class PingResult(val ok: Boolean, val latencyMs: Long, val message: String)
 
-/** client omumi baraye API haye sazegar ba OpenAI va Anthropic */
+/** client omumi baraye API هاye sazegar ba OpenAI va Anthropic */
 class AiClient {
 
 	private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -102,8 +102,8 @@ class AiClient {
 				})
 			} else if (dataUrl != null && sendFilesAsBase64) {
 				parts.add(buildJsonObject {
-					put("type", "file")
-					putJsonObject("file") {
+					put("type", "فایل")
+					putJsonObject("فایل") {
 						put("filename", a.name)
 						put("file_data", dataUrl)
 					}
@@ -119,7 +119,7 @@ class AiClient {
 	}
 
 	private fun openAiContent(m: ChatMessage, sendFilesAsBase64: Boolean): JsonElement {
-		// baraye payam matni sade, content bayad String bashad (sazegari bishtar ba gateway ha)
+		// baraye پیام matni sade, content bayad String bashad (sazegari bishtar ba gateway ha)
 		if (m.attachments.isEmpty()) return JsonPrimitive(m.activeText)
 		val parts = openAiParts(m, sendFilesAsBase64)
 		if (parts.isEmpty()) return JsonPrimitive(m.activeText)
@@ -145,7 +145,7 @@ class AiClient {
 			}
 			for (m in history) {
 				if (m.role != "user" && m.role != "assistant") continue
-				// payam haye khali ra nafrest (gateway error midahad)
+				// پیام haye khali ra nafrest (gateway error midahad)
 				if (m.activeText.isBlank() && m.attachments.isEmpty()) continue
 				add(buildJsonObject {
 					put("role", m.role)
@@ -171,7 +171,7 @@ class AiClient {
 			val base64 = dataUrl?.substringAfter("base64,", "").orEmpty()
 			if (a.kind == AttachmentKind.IMAGE && base64.isNotEmpty()) {
 				parts.add(buildJsonObject {
-					put("type", "image")
+					put("type", "عکس")
 					putJsonObject("source") {
 						put("type", "base64")
 						put("media_type", a.mimeType.ifBlank { "image/jpeg" })
@@ -322,7 +322,7 @@ class AiClient {
 		history: List<ChatMessage>,
 	): Flow<StreamEvent> = flow {
 		if (model.isBlank()) {
-			emit(StreamEvent.Failure("model entekhab nashode — az menu-ye bala yek model entekhab kon"))
+			emit(StreamEvent.Failure("مدل انتخاب نشده — از منوی بالا یک مدل انتخاب کن"))
 			return@flow
 		}
 		val body = buildBody(provider, model, settings, systemPrompt, history, true)
@@ -336,7 +336,7 @@ class AiClient {
 				}
 				val source = response.body?.source()
 				if (source == null) {
-					emit(StreamEvent.Failure("pasokhe khali az server"))
+					emit(StreamEvent.Failure("پاسخ خالی از سرور"))
 					return@flow
 				}
 				var sawData = false
@@ -367,13 +367,13 @@ class AiClient {
 					if (text != null && text.isNotEmpty()) {
 						emit(StreamEvent.Delta(text))
 					} else {
-						emit(StreamEvent.Failure("stream pasokhi nadasht"))
+						emit(StreamEvent.Failure("استریم پاسخی نداشت"))
 					}
 				}
 			}
 			emit(StreamEvent.Done)
 		} catch (t: Throwable) {
-			emit(StreamEvent.Failure(t.message ?: "khataye shabake"))
+			emit(StreamEvent.Failure(t.message ?: "خطای شبکه"))
 		}
 	}.flowOn(Dispatchers.IO)
 
@@ -408,7 +408,7 @@ class AiClient {
 	): Result<String> = withContext(Dispatchers.IO) {
 		if (model.isBlank()) {
 			return@withContext Result.failure<String>(
-				RuntimeException("model entekhab nashode — az menu-ye bala yek model entekhab kon")
+				RuntimeException("مدل انتخاب نشده — از منوی بالا یک مدل انتخاب کن")
 			)
 		}
 		try {
@@ -423,7 +423,7 @@ class AiClient {
 				}
 				val content = parseWholeBody(text, provider.type).orEmpty()
 				if (content.isEmpty()) {
-					Result.failure<String>(RuntimeException("pasokhe khali: " + text.take(300)))
+					Result.failure<String>(RuntimeException("پاسخ خالی: " + text.take(300)))
 				} else {
 					Result.success(content)
 				}
@@ -480,13 +480,13 @@ class AiClient {
 					val elapsed = System.currentTimeMillis() - started
 					val bodyText = response.body?.string().orEmpty()
 					if (response.isSuccessful) {
-						PingResult(true, elapsed, "ettesal salem")
+						PingResult(true, elapsed, "اتصال سالم")
 					} else {
 						PingResult(false, elapsed, "HTTP " + response.code + " - " + bodyText.take(160))
 					}
 				}
 			} catch (t: Throwable) {
-				PingResult(false, System.currentTimeMillis() - started, t.message ?: "khataye shabake")
+				PingResult(false, System.currentTimeMillis() - started, t.message ?: "خطای شبکه")
 			}
 		}
 
@@ -519,7 +519,7 @@ class AiClient {
 				when {
 					url != null -> Result.success(url)
 					b64 != null -> Result.success("data:image/png;base64," + b64)
-					else -> Result.failure<String>(RuntimeException("khoruji-e tasvir peyda nashod"))
+					else -> Result.failure<String>(RuntimeException("خروجی تصویر پیدا نشد"))
 				}
 			}
 		} catch (t: Throwable) {

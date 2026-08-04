@@ -26,7 +26,7 @@ import androidx.fragment.app.FragmentActivity
 import com.aigate.chat.ui.components.NeoBox
 import com.aigate.chat.ui.components.NeoButton
 
-/** safheye ghofl ba asare angosht ya ramze dastgah */
+/** safheye قفل با اثر انگشت یا رمز دستگاهe dastgah */
 @Composable
 fun LockScreen(onUnlock: () -> Unit) {
 	val context = LocalContext.current
@@ -56,7 +56,7 @@ fun LockScreen(onUnlock: () -> Unit) {
 		)
 		val info = BiometricPrompt.PromptInfo.Builder()
 			.setTitle("AiGate")
-			.setSubtitle("baraye vorood ehraze hoviat kon")
+			.setSubtitle("برای ورود هویتت را تأیید کن")
 			.setAllowedAuthenticators(allowed)
 			.build()
 		prompt.authenticate(info)
@@ -74,7 +74,7 @@ fun LockScreen(onUnlock: () -> Unit) {
 	) {
 		NeoBox(background = MaterialTheme.colorScheme.primaryContainer) {
 			Text(
-				text = "AiGate ghofl ast",
+				text = "AiGate قفل است",
 				modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
 				style = MaterialTheme.typography.headlineSmall,
 				fontWeight = FontWeight.Bold,
@@ -83,7 +83,7 @@ fun LockScreen(onUnlock: () -> Unit) {
 		}
 		Spacer(Modifier.height(18.dp))
 		NeoButton(
-			text = "baz kardan ba asare angosht",
+			text = "باز کردن با اثر انگشت",
 			icon = Icons.Filled.Lock,
 			onClick = { authenticate() },
 		)

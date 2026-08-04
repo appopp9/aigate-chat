@@ -497,7 +497,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 			return
 		}
 		if (overBudget()) {
-			showToast("budjeye mahane tamam shode — az tanzimat taghir bede")
+			showToast("بودجه ماهانه تمام شده — از تنزیمات تغییر بده")
 			return
 		}
 		val body = text.trim()
@@ -957,7 +957,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		val s = _state.value
 		_state.value = s.copy(personas = s.personas + persona)
 		persist()
-		showToast("naghsh sakhte shod")
+		showToast("نقش ساخته شد")
 	}
 
 	fun updatePersona(persona: Persona) {
@@ -998,9 +998,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 	// ---------------- prompt haye amade ----------------
 
 	private fun defaultPrompts(): List<PromptItem> = listOf(
-		PromptItem(title = "kholase kon", body = "matne zir ra dar 5 bande kootah kholase kon:\n\n", shortcut = "sum"),
-		PromptItem(title = "tarjome be farsi", body = "matne zir ra ravan be farsi tarjome kon:\n\n", shortcut = "fa"),
-		PromptItem(title = "bazbini code", body = "in code ra baresi kon va bug ha va behbood ha ra begoo:\n\n", shortcut = "code"),
+		PromptItem(title = "خلاصه کن", body = "matne zir ra dar 5 bande kootah خلاصه کن:\n\n", shortcut = "sum"),
+		PromptItem(title = "ترجمه به فارسی", body = "matne zir ra ravan be farsi tarjome kon:\n\n", shortcut = "fa"),
+		PromptItem(title = "بازبینی کد", body = "in code ra baresi kon va bug ha va behbood ha ra begoo:\n\n", shortcut = "code"),
 	)
 
 	fun addPrompt(item: PromptItem) {
@@ -1021,7 +1021,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		persist()
 	}
 
-	// ---------------- pin kardane payam ----------------
+	// ---------------- pin kardane پیام ----------------
 
 	fun toggleMessagePin(messageId: String) {
 		val conversation = _state.value.current ?: return
@@ -1081,10 +1081,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		val spent = s.monthCost
 		val percent = (spent / budget) * 100.0
 		if (percent >= 100.0) {
-			showToast("budjeye mahane tamam shod: " + TokenCounter.formatCost(spent))
+			showToast("بودجه ماهانه تمام شد: " + TokenCounter.formatCost(spent))
 		} else if (percent >= s.settings.budgetWarnPercent && !s.budgetWarned) {
 			_state.value = _state.value.copy(budgetWarned = true)
-			showToast("hoshdar: " + percent.toInt() + "% budje masraf shode")
+			showToast("هشدار: " + percent.toInt() + "٪ بودجه مصرف شده")
 		}
 	}
 
@@ -1093,7 +1093,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		val s = _state.value
 		_state.value = s.copy(usage = s.usage.filterNot { it.month == month }, budgetWarned = false)
 		persist()
-		showToast("masrafe in mah sefr shod")
+		showToast("مصرف این ماه صفر شد")
 	}
 
 	private fun overBudget(): Boolean {
@@ -1115,13 +1115,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		return !enders.contains(last)
 	}
 
-	/** edameye pasokhi ke nesfe mande */
+	/** ادامه‌ی پاسخi ke nesfe mande */
 	fun continueMessage(messageId: String) {
 		val s = _state.value
 		val conversation = s.current ?: return
 		val provider = s.providerOf(conversation)
 		if (provider == null) {
-			showToast("API entekhab nashode")
+			showToast("API انتخاب نشده")
 			return
 		}
 		val message = conversation.messages.firstOrNull { it.id == messageId } ?: return
@@ -1130,7 +1130,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 			ChatMessage(role = "user", content = "Continue exactly from where you stopped. Do not repeat previous text.")
 		val usedModel = conversation.model.ifBlank { provider.defaultModel }
 		_state.value = _state.value.copy(isGenerating = true)
-		GenerationService.start(getApplication(), "AiGate", "edameye pasokh")
+		GenerationService.start(getApplication(), "AiGate", "ادامه‌ی پاسخ")
 		generationJob?.cancel()
 		generationJob = viewModelScope.launch {
 			val result = client.complete(
@@ -1156,7 +1156,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 						)
 					}
 				},
-				onFailure = { error -> showToast("edame nashod: " + (error.message ?: "khata")) },
+				onFailure = { error -> showToast("ادامه نشد: " + (error.message ?: "khata")) },
 			)
 			_state.value = _state.value.copy(isGenerating = false)
 			GenerationService.stop(getApplication())
@@ -1164,7 +1164,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		}
 	}
 
-	// ---------------- moghayeseye do model ----------------
+	// ---------------- مقایسه دو مدل ----------------
 
 	fun setComparePrompt(prompt: String) {
 		_state.value = _state.value.copy(compare = _state.value.compare.copy(prompt = prompt))

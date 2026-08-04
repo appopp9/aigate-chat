@@ -31,7 +31,7 @@ import com.aigate.chat.ui.components.NeoBox
 import com.aigate.chat.ui.components.NeoChip
 import com.aigate.chat.ui.components.NeoIconButton
 
-/** jost-o-jooye sartasari dar hameye goftogooha */
+/** جست‌وجوی سرتاسری dar hameye goftogooha */
 @Composable
 fun SearchScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 	val state by viewModel.state.collectAsStateCompat()
@@ -52,11 +52,11 @@ fun SearchScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 				icon = Icons.Filled.ArrowBack,
 				boxSize = 48.dp,
 				onClick = onBack,
-				contentDescription = "bazgasht",
+				contentDescription = "بازگشت",
 			)
 			Spacer(Modifier.width(10.dp))
 			Text(
-				text = "jost-o-jooye sartasari",
+				text = "جست‌وجوی سرتاسری",
 				style = MaterialTheme.typography.headlineSmall,
 				fontWeight = FontWeight.Bold,
 				color = MaterialTheme.colorScheme.onBackground,
@@ -66,18 +66,18 @@ fun SearchScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 		NeoTextField(
 			value = query,
 			onValueChange = { query = it },
-			placeholder = "donbale che chizi migardi?",
+			placeholder = "دنبال چه چیزی می‌گردی؟",
 			modifier = Modifier.fillMaxWidth(),
 		)
 
 		if (query.trim().length < 2) {
 			Text(
-				text = "hadeaghal 2 harf benevis",
+				text = "حداقل ۲ حرف بنویس",
 				style = MaterialTheme.typography.bodyMedium,
 				color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
 			)
 		} else {
-			NeoChip(text = hits.size.toString() + " natije")
+			NeoChip(text = hits.size.toString() + " نتیجه")
 			LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
 				items(hits, key = { it.messageId }) { hit ->
 					NeoBox(

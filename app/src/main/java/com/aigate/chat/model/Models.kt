@@ -11,7 +11,7 @@ enum class ProviderType { OPENAI, ANTHROPIC }
 @Serializable
 data class Attachment(
 	val id: String = UUID.randomUUID().toString(),
-	val name: String = "file",
+	val name: String = "فایل",
 	val mimeType: String = "application/octet-stream",
 	val sizeBytes: Long = 0L,
 	val kind: AttachmentKind = AttachmentKind.FILE,
@@ -35,7 +35,7 @@ data class ChatMessage(
 	val completionTokens: Int = 0,
 	val costUsd: Double = 0.0,
 	val modelName: String = "",
-	/** payam sanjagh shode */
+	/** پیام sanjagh shode */
 	val pinned: Boolean = false,
 	/** agar pasokh nesfe mande bashad (max_tokens) */
 	val truncated: Boolean = false,
@@ -116,13 +116,13 @@ data class PromptItem(
 @Serializable
 data class Conversation(
 	val id: String = UUID.randomUUID().toString(),
-	val title: String = "goftogooye jadid",
+	val title: String = "گفت‌وگوی جدید",
 	val providerId: String = "",
 	val model: String = "",
 	val messages: List<ChatMessage> = emptyList(),
 	val updatedAt: Long = System.currentTimeMillis(),
 	val pinned: Boolean = false,
-	/** shakhe'i kardane goftogoo */
+	/** شاخه'i kardane goftogoo */
 	val parentId: String? = null,
 	val branchedFromMessageId: String? = null,
 	/** naghshe entekhab shode baraye in goftogoo */
@@ -174,6 +174,7 @@ data class AppSettings(
 	val askFallback: Boolean = true,
 	val maxTokens: Int = 4096,
 	/** andazeye font goftogoo */
+	val neoStyle: Boolean = true,
 	val fontScale: FontScale = FontScale.MEDIUM,
 	/** ghofle app ba asare angosht */
 	val appLockEnabled: Boolean = false,

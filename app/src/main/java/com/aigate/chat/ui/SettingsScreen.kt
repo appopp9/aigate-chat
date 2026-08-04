@@ -242,22 +242,38 @@ fun SettingsScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 				}
 			}
 
-			// andazeye ghalam
 			item {
-				SectionCard("andazeye ghalam") {
+				SectionCard("استایل ظاهری") {
+					Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+						ToggleRow("استایل نئوبروتالیسم", settings.neoStyle) {
+							haptics.tap()
+							viewModel.updateSettings(settings.copy(neoStyle = it))
+						}
+						Text(
+							if (settings.neoStyle) "قاب ضخیم، سایه سخت و انیمیشن فشاری فعال است" else "ظاهر ساده و نرم شبیه ChatGPT فعال است",
+							style = MaterialTheme.typography.labelSmall,
+							color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+						)
+					}
+				}
+			}
+
+			// اندازه فونت
+			item {
+				SectionCard("اندازه فونت") {
 					Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
 						NeoChip(
-							text = "koochak",
+							text = "کوچک",
 							selected = settings.fontScale == FontScale.SMALL,
 							onClick = { viewModel.updateSettings(settings.copy(fontScale = FontScale.SMALL)) },
 						)
 						NeoChip(
-							text = "motevaset",
+							text = "متوسط",
 							selected = settings.fontScale == FontScale.MEDIUM,
 							onClick = { viewModel.updateSettings(settings.copy(fontScale = FontScale.MEDIUM)) },
 						)
 						NeoChip(
-							text = "bozorg",
+							text = "بزرگ",
 							selected = settings.fontScale == FontScale.LARGE,
 							onClick = { viewModel.updateSettings(settings.copy(fontScale = FontScale.LARGE)) },
 						)
@@ -267,13 +283,13 @@ fun SettingsScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 
 			// ghofle app
 			item {
-				SectionCard("ghofle barname") {
+				SectionCard("قفل برنامه") {
 					Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-						ToggleRow("ghofl ba asare angosht ya ramz", settings.appLockEnabled) {
+						ToggleRow("قفل با اثر انگشت یا رمز دستگاه", settings.appLockEnabled) {
 							viewModel.updateSettings(settings.copy(appLockEnabled = it))
 						}
 						Text(
-							"ba faal kardan, har bar bazkardane barname ehraze hoviat lazem ast.",
+							"با فعال کردن، هر بار باز کردن برنامه تأیید هویت لازم است.",
 							style = MaterialTheme.typography.labelSmall,
 							color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
 						)
@@ -283,15 +299,15 @@ fun SettingsScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 
 			// budje
 			item {
-				SectionCard("budjeye mahane") {
+				SectionCard("بودجه ماهانه") {
 					Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
 						Text(
-							"masrafe in mah: $" + ((state.monthCost * 1000).roundToInt() / 1000.0),
+							"مصرف این ماه: $" + ((state.monthCost * 1000).roundToInt() / 1000.0),
 							style = MaterialTheme.typography.bodyMedium,
 							color = MaterialTheme.colorScheme.onSurface,
 						)
 						Text(
-							"saghfe budje (dollar): " + ((settings.monthlyBudgetUsd * 100).roundToInt() / 100.0),
+							"سقف بودجه (دلار): " + ((settings.monthlyBudgetUsd * 100).roundToInt() / 100.0),
 							style = MaterialTheme.typography.bodyMedium,
 							color = MaterialTheme.colorScheme.onSurface,
 						)
@@ -303,7 +319,7 @@ fun SettingsScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 							valueRange = 0f..200f,
 						)
 						Text(
-							"hoshdar dar: " + settings.budgetWarnPercent + "%",
+							"هشدار در: " + settings.budgetWarnPercent + "%",
 							style = MaterialTheme.typography.bodyMedium,
 							color = MaterialTheme.colorScheme.onSurface,
 						)
@@ -314,11 +330,11 @@ fun SettingsScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 							},
 							valueRange = 10f..100f,
 						)
-						ToggleRow("jelogiri az ersal baad az etmame budje", settings.blockOverBudget) {
+						ToggleRow("جلوگیری از ارسال بعد از اتمام بودجه", settings.blockOverBudget) {
 							viewModel.updateSettings(settings.copy(blockOverBudget = it))
 						}
 						NeoButton(
-							text = "sefr kardane masrafe in mah",
+							text = "صفر کردن مصرف این ماه",
 							containerColor = MaterialTheme.colorScheme.surfaceVariant,
 							onClick = { viewModel.resetMonthUsage() },
 						)

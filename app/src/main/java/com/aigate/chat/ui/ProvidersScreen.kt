@@ -457,7 +457,7 @@ private fun ProviderCard(
 								verticalArrangement = Arrangement.spacedBy(6.dp),
 							) {
 								Text(
-									text = "gheymate in model (dollar be ezaye 1M token)",
+									text = "قیمت این مدل (دلار به ازای ۱ میلیون توکن)",
 									style = MaterialTheme.typography.labelSmall,
 									color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
 								)
@@ -466,7 +466,7 @@ private fun ProviderCard(
 										NeoTextField(
 											value = inText,
 											onValueChange = { inText = it },
-											placeholder = "vorodi",
+											placeholder = "ورودی",
 											modifier = Modifier.fillMaxWidth(),
 										)
 									}
@@ -475,7 +475,7 @@ private fun ProviderCard(
 										NeoTextField(
 											value = outText,
 											onValueChange = { outText = it },
-											placeholder = "khoroji",
+											placeholder = "خروجی",
 											modifier = Modifier.fillMaxWidth(),
 										)
 									}
@@ -483,7 +483,7 @@ private fun ProviderCard(
 									NeoIconButton(
 										icon = Icons.Filled.Check,
 										boxSize = 40.dp,
-										contentDescription = "zakhire gheymat",
+										contentDescription = "ذخیره قیمت",
 										onClick = {
 											onSetModelPrice(
 												model,
