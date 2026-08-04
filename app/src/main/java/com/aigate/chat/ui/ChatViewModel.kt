@@ -603,6 +603,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 							if (event.completionTokens > 0) usageCompletion = event.completionTokens
 						}
 
+						is StreamEvent.Replace -> {
+							builder.setLength(0)
+							builder.append(event.text)
+							setMessageText(conversationId, assistantMessageId, builder.toString(), asVariant)
+						}
+
 						is StreamEvent.Failure -> failure = event.message
 						is StreamEvent.Done -> Unit
 					}

@@ -32,6 +32,7 @@ import java.util.concurrent.TimeUnit
 
 sealed interface StreamEvent {
 	data class Delta(val text: String) : StreamEvent
+	data class Replace(val text: String) : StreamEvent
 	data class Usage(val promptTokens: Int, val completionTokens: Int) : StreamEvent
 	data class Failure(val message: String) : StreamEvent
 	object Done : StreamEvent

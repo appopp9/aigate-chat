@@ -20,9 +20,9 @@ import kotlin.coroutines.resume
 /**
  * halate sevvom: goftogoo az tarighe neshaste morourgar (WebView).
  *
- * nokteye mohem: WebView bayad be panjere vasl bashad, vagarna Chromium
- * requestAnimationFrame ra ejra nemikonad va site (React) hargez hydrate nemishavad.
- * baraye hamin MainActivity yek WebView makhfi (1dp) misazad va inja sabt mikonad.
+ * ravesh: ghabl az ersal, hameye block haye javab e mojood ba data-aigate-seen alamat mikhorand.
+ * bad az ersal, aval block e bi-alamat peyda mishavad; in ravesh ba avaz shodane URL
+ * (sakhte goftogooye jadid dar site) ham nemishkanad, chon shomaresh melak nist.
  */
 object WebSessionClient {
 
@@ -33,7 +33,7 @@ object WebSessionClient {
 			"Chrome/124.0.0.0 Mobile Safari/537.36"
 
 	private var host: WebView? = null
-	private var fallback: WebView? = null
+	private var fallbackView: WebView? = null
 	private var lastLog: String = ""
 
 	fun log(): String = lastLog
@@ -57,7 +57,6 @@ object WebSessionClient {
 		cookies.setAcceptThirdPartyCookies(view, true)
 	}
 
-	/** WebView makhfi va vasl-shode be panjere ra sabt mikonad. */
 	fun attachHost(view: WebView) {
 		host = view
 	}
@@ -76,13 +75,13 @@ object WebSessionClient {
 			val view = if (attached != null) {
 				attached
 			} else {
-				val existing = fallback
+				val existing = fallbackView
 				if (existing != null) {
 					existing
 				} else {
 					val created = WebView(context.applicationContext)
 					configure(created)
-					fallback = created
+					fallbackView = created
 					created
 				}
 			}
@@ -137,7 +136,6 @@ object WebSessionClient {
 		return "\"" + escaped + "\""
 	}
 
-	/** tavabe komaki ra roye safhe nasb mikonad. */
 	private val BOOTSTRAP = """
 (function(){
   function inputEl(){
@@ -145,10 +143,15 @@ object WebSessionClient {
       || document.querySelector('textarea')
       || document.querySelector('[contenteditable="true"]');
   }
-  function nodes(){
+  function blocks(){
     var list = document.querySelectorAll('div.ds-markdown');
-    if (list.length === 0){ list = document.querySelectorAll('div[class*="markdown"]'); }
-    return list;
+    if (list.length > 0){ return list; }
+    list = document.querySelectorAll('div[class*="markdown"]');
+    if (list.length > 0){ return list; }
+    return document.querySelectorAll('[class*="message"] > div, [class*="Message"] > div');
+  }
+  function thinkBlocks(){
+    return document.querySelectorAll('[class*="thinking"], [class*="Thinking"], [class*="reasoning"]');
   }
   function nodeText(root){
     var out = '';
@@ -183,22 +186,49 @@ object WebSessionClient {
   window.__aigateReady = function(){ return inputEl() ? '1' : '0'; };
   window.__aigateDiag = function(){
     var el = inputEl();
+    var seen = document.querySelectorAll('[data-aigate-seen="1"]').length;
     return 'url=' + location.href
       + ' | input=' + (el ? el.tagName : 'none')
-      + ' | blocks=' + nodes().length
+      + ' | blocks=' + blocks().length
+      + ' | seen=' + seen
+      + ' | think=' + thinkBlocks().length
       + ' | buttons=' + document.querySelectorAll('div[role="button"], button').length;
   };
-  window.__aigateCount = function(){ return String(nodes().length); };
-  window.__aigateText = function(){
-    var list = nodes();
-    if (list.length === 0){ return ''; }
-    return nodeText(list[list.length - 1]);
+  // hameye block haye feli ra alamat mizanad ta bad az ersal betavanim block e jadid ra tashkhis dahim
+  window.__aigateMark = function(){
+    var list = blocks();
+    for (var i = 0; i < list.length; i++){ list[i].setAttribute('data-aigate-seen', '1'); }
+    var th = thinkBlocks();
+    for (var j = 0; j < th.length; j++){ th[j].setAttribute('data-aigate-seen', '1'); }
+    return String(list.length);
+  };
+  // matn e akharin block e bi-alamat (javab e jadid)
+  window.__aigateNew = function(skip){
+    var list = blocks();
+    var found = null;
+    for (var i = 0; i < list.length; i++){
+      var b = list[i];
+      if (b.getAttribute('data-aigate-seen') === '1'){ continue; }
+      var t = nodeText(b);
+      if (skip && skip.length > 8 && t.replace(/\s+/g, ' ').indexOf(skip) >= 0 && t.length < skip.length + 30){ continue; }
+      found = b;
+    }
+    if (!found){ return ''; }
+    return nodeText(found);
+  };
+  window.__aigateNewCount = function(){
+    var list = blocks();
+    var n = 0;
+    for (var i = 0; i < list.length; i++){
+      if (list[i].getAttribute('data-aigate-seen') !== '1'){ n++; }
+    }
+    return String(n);
   };
   window.__aigateBusy = function(){
-    var all = document.querySelectorAll('div[role="button"], button, [aria-label]');
+    var all = document.querySelectorAll('div[role="button"], button, [aria-label], [class*="loading"], [class*="Loading"]');
     for (var i = 0; i < all.length; i++){
       var label = ((all[i].getAttribute('aria-label') || '') + ' ' + (all[i].className || '')).toLowerCase();
-      if (label.indexOf('stop') >= 0){ return '1'; }
+      if (label.indexOf('stop') >= 0 || label.indexOf('loading') >= 0){ return '1'; }
     }
     return '0';
   };
@@ -256,6 +286,19 @@ object WebSessionClient {
     if (last){ last.click(); return 'clicked-last'; }
     return 'no-button';
   };
+  window.__aigateDeepThink = function(on){
+    var all = document.querySelectorAll('div[role="button"], button, span');
+    for (var i = 0; i < all.length; i++){
+      var text = (all[i].innerText || '').toLowerCase();
+      if (text.indexOf('deepthink') >= 0 || text.indexOf('deep think') >= 0){
+        var active = (all[i].className || '').toLowerCase().indexOf('active') >= 0
+          || all[i].getAttribute('aria-pressed') === 'true';
+        if ((on === '1' && !active) || (on === '0' && active)){ all[i].click(); }
+        return 'toggled';
+      }
+    }
+    return 'not-found';
+  };
   return 'installed';
 })();
 """
@@ -280,7 +323,6 @@ object WebSessionClient {
 		return last?.activeText?.trim().orEmpty()
 	}
 
-	/** vaziyate login ra check mikonad. */
 	suspend fun checkSession(context: Context, provider: Provider): PingResult {
 		val start = System.currentTimeMillis()
 		val url = provider.baseUrl.ifBlank { DEFAULT_SITE }
@@ -303,7 +345,6 @@ object WebSessionClient {
 		}
 	}
 
-	/** payam ra dar site ersal mikonad va pasokh ra be soorate stream barmigardanad. */
 	fun streamChat(
 		context: Context,
 		provider: Provider,
@@ -319,11 +360,10 @@ object WebSessionClient {
 		val view = webView(context, url)
 
 		if (!waitReady(view, 40000)) {
-			val diag = eval(view, "window.__aigateDiag()")
-			lastLog = diag
+			lastLog = eval(view, "window.__aigateDiag()")
 			emit(
 				StreamEvent.Failure(
-					"صفحه‌ی سایت آماده نشد. از بخش API‌ها دکمه‌ی «ورود به سایت» را بزن و مطمئن شو لاگین هستی. " + diag
+					"صفحه‌ی سایت آماده نشد. از بخش API‌ها دکمه‌ی «ورود به سایت» را بزن. " + lastLog
 				)
 			)
 			return@flow
@@ -333,28 +373,28 @@ object WebSessionClient {
 			model.contains("reason", ignoreCase = true) ||
 			model.contains("think", ignoreCase = true)
 		if (wantsDeepThink) {
-			eval(view, "window.__aigateDeepThink ? window.__aigateDeepThink('1') : ''")
-			delay(250)
+			eval(view, "window.__aigateDeepThink('1')")
+			delay(300)
 		}
 
-		val baseCount = eval(view, "window.__aigateCount()").toIntOrNull() ?: 0
+		// alamat zadane hameye javab haye ghabli
+		eval(view, "window.__aigateMark()")
 
-		// 1) neveshtan dar kadr
+		// 1) neveshtan
 		val typed = eval(view, "window.__aigateType(" + jsString(prompt) + ")")
 		delay(300)
 		if (typed != "ok" || eval(view, "window.__aigateValue()").isBlank()) {
-			val diag = eval(view, "window.__aigateDiag()")
-			lastLog = diag
-			emit(StreamEvent.Failure("نمی‌توانم در کادر چت سایت بنویسم. " + diag))
+			lastLog = eval(view, "window.__aigateDiag()")
+			emit(StreamEvent.Failure("نمی‌توانم در کادر چت سایت بنویسم. " + lastLog))
 			return@flow
 		}
 
-		// 2) Enter, va agar kar nakard click roye dokmeye ersal
+		// 2) ersal
 		eval(view, "window.__aigateEnter()")
 		delay(700)
 		var sent = eval(view, "window.__aigateValue()").isBlank()
 		if (!sent) {
-			val clicked = eval(view, "window.__aigateClickSend()")
+			eval(view, "window.__aigateClickSend()")
 			delay(900)
 			sent = eval(view, "window.__aigateValue()").isBlank()
 			if (!sent) {
@@ -362,57 +402,82 @@ object WebSessionClient {
 				delay(900)
 				sent = eval(view, "window.__aigateValue()").isBlank()
 			}
-			lastLog = "click=" + clicked + " | " + eval(view, "window.__aigateDiag()")
 		}
 		if (!sent) {
-			val diag = eval(view, "window.__aigateDiag()")
-			lastLog = diag
-			emit(StreamEvent.Failure("دکمه‌ی ارسال سایت پیدا نشد (ساختار سایت عوض شده). " + diag))
+			lastLog = eval(view, "window.__aigateDiag()")
+			emit(StreamEvent.Failure("دکمه‌ی ارسال سایت پیدا نشد. " + lastLog))
 			return@flow
 		}
 
-		// 3) khandane pasokh
+		// 3) khandane javab: har block e bi-alamat javabe jadid ast
+		val skip = prompt.replace(Regex("\\s+"), " ").take(40)
+		val skipArg = jsString(skip)
 		var emitted = ""
 		var stableFor = 0
 		var elapsed = 0
 		var started = false
+		var sawAnyBlock = false
+
 		while (elapsed < 300000) {
-			delay(450)
-			elapsed += 450
-			val count = eval(view, "window.__aigateCount()").toIntOrNull() ?: 0
-			if (count <= baseCount) {
-				if (elapsed > 60000) {
+			delay(400)
+			elapsed += 400
+
+			// baze safhe (masalan sakhte goftogooye jadid) script ra pak mikonad
+			val alive = eval(view, "typeof window.__aigateNew")
+			if (alive != "function") {
+				install(view)
+				delay(200)
+			}
+
+			val newCount = eval(view, "window.__aigateNewCount()").toIntOrNull() ?: 0
+			if (newCount > 0) sawAnyBlock = true
+
+			val text = eval(view, "window.__aigateNew(" + skipArg + ")").trim()
+			if (text.isEmpty()) {
+				if (!started && elapsed > 120000) {
 					lastLog = eval(view, "window.__aigateDiag()")
-					emit(StreamEvent.Failure("پیام ارسال شد ولی سایت پاسخی نشان نداد. " + lastLog))
+					emit(
+						StreamEvent.Failure(
+							"پیام ارسال شد ولی متن پاسخ در صفحه پیدا نشد" +
+								(if (sawAnyBlock) " (بلوک جدید دیده شد ولی خواندنی نبود)" else "") +
+								". " + lastLog
+						)
+					)
 					return@flow
 				}
+				if (started) stableFor += 400
+				if (started && stableFor >= 8000) break
 				continue
 			}
-			val text = eval(view, "window.__aigateText()").trimStart()
-			if (text.isEmpty()) continue
+
 			started = true
 			if (text.length > emitted.length && text.startsWith(emitted)) {
 				emit(StreamEvent.Delta(text.substring(emitted.length)))
 				emitted = text
 				stableFor = 0
 			} else if (text != emitted) {
-				emit(StreamEvent.Delta("\n" + text))
+				// bazneveshte shod: az avval jaygozin kon
+				emit(StreamEvent.Replace(text))
 				emitted = text
 				stableFor = 0
 			} else {
-				stableFor += 450
+				stableFor += 400
 			}
+
 			val busy = eval(view, "window.__aigateBusy()") == "1"
 			if (busy) {
-				stableFor = 0
-			} else if (stableFor >= 1800) {
+				if (stableFor > 4000) stableFor = 4000
+			} else if (stableFor >= 2000) {
 				break
 			}
-			if (stableFor >= 6000) break
+			if (stableFor >= 10000) break
 		}
+
 		persistCookies()
+		eval(view, "window.__aigateMark()")
 		if (!started) {
-			emit(StreamEvent.Failure("پاسخی از سایت خوانده نشد"))
+			lastLog = eval(view, "window.__aigateDiag()")
+			emit(StreamEvent.Failure("پاسخی از سایت خوانده نشد. " + lastLog))
 		} else {
 			emit(StreamEvent.Done)
 		}
@@ -424,26 +489,27 @@ object WebSessionClient {
 		model: String,
 		history: List<ChatMessage>,
 	): Result<String> {
-		val builder = StringBuilder()
+		var text = ""
 		var failure: String? = null
 		streamChat(context, provider, model, history).collect { event ->
 			when (event) {
-				is StreamEvent.Delta -> builder.append(event.text)
+				is StreamEvent.Delta -> text += event.text
+				is StreamEvent.Replace -> text = event.text
 				is StreamEvent.Failure -> failure = event.message
 				else -> Unit
 			}
 		}
 		val error = failure
-		return if (builder.isNotEmpty()) {
-			Result.success(builder.toString())
+		return if (text.isNotEmpty()) {
+			Result.success(text)
 		} else {
 			Result.failure(IllegalStateException(error ?: "پاسخی دریافت نشد"))
 		}
 	}
 
 	fun release() {
-		val view = fallback
-		fallback = null
+		val view = fallbackView
+		fallbackView = null
 		view?.destroy()
 	}
 }
