@@ -3,6 +3,7 @@ package com.aigate.chat.ui
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -68,6 +69,7 @@ import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Storage
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -76,7 +78,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -102,6 +103,9 @@ import com.aigate.chat.model.FontScale
 import com.aigate.chat.model.Provider
 import com.aigate.chat.model.ProviderStatus
 import com.aigate.chat.ui.components.LocalFlatStyle
+import com.aigate.chat.ui.components.motionEnter
+import com.aigate.chat.ui.components.motionExit
+import com.aigate.chat.ui.components.motionSpec
 import com.aigate.chat.ui.components.NeoBox
 import com.aigate.chat.ui.components.NeoButton
 import com.aigate.chat.ui.components.NeoChip
@@ -126,7 +130,7 @@ fun ChatScreen(
 	val state by viewModel.state.collectAsStateCompat()
 	val context = LocalContext.current
 	val scope = rememberCoroutineScope()
-	val drawerState = rememberDrawerState(DrawerValue.Closed)
+	val drawerState = remember { DrawerState(DrawerValue.Closed) }
 	val listState = rememberLazyListState()
 	val haptics = rememberHaptics(state.settings.hapticsEnabled)
 
@@ -177,20 +181,28 @@ fun ChatScreen(
 						scope.launch { drawerState.close() }
 					},
 					onOpenProviders = {
-						scope.launch { drawerState.close() }
-						onOpenProviders()
+						scope.launch {
+							drawerState.close()
+							onOpenProviders()
+						}
 					},
 					onOpenSettings = {
-						scope.launch { drawerState.close() }
-						onOpenSettings()
+						scope.launch {
+							drawerState.close()
+							onOpenSettings()
+						}
 					},
 					onOpenCompare = {
-						scope.launch { drawerState.close() }
-						onOpenCompare()
+						scope.launch {
+							drawerState.close()
+							onOpenCompare()
+						}
 					},
 					onOpenSearch = {
-						scope.launch { drawerState.close() }
-						onOpenSearch()
+						scope.launch {
+							drawerState.close()
+							onOpenSearch()
+						}
 					},
 				)
 			}
@@ -575,6 +587,11 @@ fun ChatScreen(
 			}
 
 			// ---------- toast ----------
+			AnimatedVisibility(
+				visible = toast != null,
+				enter = motionEnter(),
+				exit = motionExit(),
+			) {
 			if (toast != null) {
 				Box(
 					modifier = Modifier
@@ -590,6 +607,7 @@ fun ChatScreen(
 						)
 					}
 				}
+			}
 			}
 		}
 	}

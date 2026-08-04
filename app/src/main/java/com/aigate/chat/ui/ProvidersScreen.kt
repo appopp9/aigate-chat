@@ -401,6 +401,12 @@ private fun ProviderCard(
 			)
 			if (expanded) {
 				Spacer(Modifier.height(8.dp))
+				Text(
+					text = "روی چیپ قیمت کنار هر مدل بزن تا برای همان مدل قیمت جداگانه ثبت کنی",
+					style = MaterialTheme.typography.labelSmall,
+					color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+				)
+				Spacer(Modifier.height(6.dp))
 				NeoTextField(
 					value = modelQuery,
 					onValueChange = { modelQuery = it },

@@ -91,7 +91,7 @@ fun NeoBox(
 		val flatShape: Shape = FlatShape
 		val pressAlpha by animateFloatAsState(
 			targetValue = if (pressed && onClick != null) 0.72f else 1f,
-			animationSpec = tween(durationMillis = 120),
+			animationSpec = tween(durationMillis = 90, easing = NeoEasing),
 			label = "flatBoxPress",
 		)
 		Box(
@@ -110,7 +110,7 @@ fun NeoBox(
 
 	val shift by animateDpAsState(
 		targetValue = if (pressed && onClick != null) shadowOffset else 0.dp,
-		animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessHigh),
+		animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 2600f),
 		label = "neoPress",
 	)
 
@@ -170,7 +170,7 @@ fun NeoButton(
 	if (flat) {
 		val scaleValue by animateFloatAsState(
 			targetValue = if (pressed && enabled) 0.97f else 1f,
-			animationSpec = tween(durationMillis = 110),
+			animationSpec = tween(durationMillis = 90, easing = NeoEasing),
 			label = "flatBtnPress",
 		)
 		Box(
@@ -194,7 +194,7 @@ fun NeoButton(
 
 	val shift by animateDpAsState(
 		targetValue = if (pressed && enabled) 4.dp else 0.dp,
-		animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessHigh),
+		animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 2600f),
 		label = "btnPress",
 	)
 
@@ -249,7 +249,7 @@ fun NeoIconButton(
 	if (flat) {
 		val scaleValue by animateFloatAsState(
 			targetValue = if (pressed && enabled) 0.9f else 1f,
-			animationSpec = tween(durationMillis = 110),
+			animationSpec = tween(durationMillis = 90, easing = NeoEasing),
 			label = "flatIconPress",
 		)
 		val flatBackground = if (containerColor == surfaceColor) Color.Transparent else containerColor
@@ -274,7 +274,7 @@ fun NeoIconButton(
 
 	val shift by animateDpAsState(
 		targetValue = if (pressed && enabled) 3.dp else 0.dp,
-		animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessHigh),
+		animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 2600f),
 		label = "iconPress",
 	)
 

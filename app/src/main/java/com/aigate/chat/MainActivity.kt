@@ -6,6 +6,13 @@ import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.fragment.app.FragmentActivity
@@ -22,6 +29,7 @@ import com.aigate.chat.ui.SearchScreen
 import com.aigate.chat.ui.SettingsScreen
 import com.aigate.chat.ui.collectAsStateCompat
 import com.aigate.chat.ui.components.LocalFlatStyle
+import com.aigate.chat.ui.components.NeoEasing
 import com.aigate.chat.ui.theme.AiGateTheme
 
 class MainActivity : FragmentActivity() {
@@ -50,7 +58,33 @@ class MainActivity : FragmentActivity() {
 						LockScreen(onUnlock = { viewModel.setUnlocked(true) })
 					} else {
 						val navController = rememberNavController()
-						NavHost(navController = navController, startDestination = "chat") {
+						val flat = !state.settings.neoStyle
+						val dur = if (flat) 150 else 300
+						val shortDur = if (flat) 110 else 220
+						NavHost(
+							navController = navController,
+							startDestination = "chat",
+							enterTransition = {
+								slideInHorizontally(
+									animationSpec = tween(dur, easing = NeoEasing),
+									initialOffsetX = { full -> if (flat) full / 8 else full / 3 },
+								) + fadeIn(animationSpec = tween(dur, easing = NeoEasing))
+							},
+							exitTransition = {
+								fadeOut(animationSpec = tween(shortDur, easing = NeoEasing)) +
+									scaleOut(targetScale = if (flat) 0.99f else 0.94f, animationSpec = tween(shortDur, easing = NeoEasing))
+							},
+							popEnterTransition = {
+								fadeIn(animationSpec = tween(dur, easing = NeoEasing)) +
+									scaleIn(initialScale = if (flat) 0.99f else 0.94f, animationSpec = tween(dur, easing = NeoEasing))
+							},
+							popExitTransition = {
+								slideOutHorizontally(
+									animationSpec = tween(shortDur, easing = NeoEasing),
+									targetOffsetX = { full -> if (flat) full / 8 else full / 3 },
+								) + fadeOut(animationSpec = tween(shortDur, easing = NeoEasing))
+							},
+						) {
 							composable("chat") {
 								ChatScreen(
 									viewModel = viewModel,
