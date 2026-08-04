@@ -6,12 +6,12 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * شمارش تقریبی توکن و تخمین هزینه.
- * محاسبه کاملاً محلی است و هیچ درخواستی به سرور نمی‌زند.
+ * shomaresh taghribi token va takhmine hazine.
+ * mohasebe kamelan mahalli ast va hich darkhasti be server nemizanad.
  */
 object TokenCounter {
 
-	/** حروف لاتین تقریباً ۴ کاراکتر به ازای هر توکن، فارسی تقریباً ۲ کاراکتر */
+	/** horoofe latin taghriban 4 character be ezaye har token, farsi taghriban 2 */
 	fun countText(text: String): Int {
 		if (text.isEmpty()) return 0
 		var ascii = 0
@@ -27,12 +27,7 @@ object TokenCounter {
 		var total = countText(message.activeText) + 4
 		for (a in message.attachments) {
 			val textContent = a.textContent
-			total += if (textContent != null) {
-				countText(textContent)
-			} else {
-				// تخمین تقریبی برای تصویر/فایل باینری
-				765
-			}
+			total += if (textContent != null) countText(textContent) else 765
 		}
 		return total
 	}
@@ -43,13 +38,23 @@ object TokenCounter {
 		return total
 	}
 
-	/** هزینه برحسب دلار بر اساس قیمت هر یک میلیون توکن */
-	fun estimateCost(provider: Provider?, promptTokens: Int, completionTokens: Int): Double {
+	/** hazine bar hasbe dollar ba gheymate ekhtesasi har model */
+	fun estimateCost(
+		provider: Provider?,
+		model: String,
+		promptTokens: Int,
+		completionTokens: Int,
+	): Double {
 		if (provider == null) return 0.0
-		val input = provider.inputPricePerM * (promptTokens / 1_000_000.0)
-		val output = provider.outputPricePerM * (completionTokens / 1_000_000.0)
+		val pricing = provider.pricingFor(model)
+		val input = pricing.inputPricePerM * (promptTokens / 1_000_000.0)
+		val output = pricing.outputPricePerM * (completionTokens / 1_000_000.0)
 		return input + output
 	}
+
+	/** nosakheye ghadimi: gheymate pishfarze provider */
+	fun estimateCost(provider: Provider?, promptTokens: Int, completionTokens: Int): Double =
+		estimateCost(provider, provider?.defaultModel.orEmpty(), promptTokens, completionTokens)
 
 	fun formatTokens(count: Int): String = when {
 		count >= 1_000_000 -> ((count / 100_000).toDouble() / 10.0).toString() + "M"

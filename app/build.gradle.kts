@@ -13,8 +13,8 @@ android {
 		applicationId = "com.aigate.chat"
 		minSdk = 24
 		targetSdk = 35
-		versionCode = 3
-		versionName = "3.0"
+		versionCode = 4
+		versionName = "4.0"
 		vectorDrawables { useSupportLibrary = true }
 	}
 
@@ -60,6 +60,8 @@ dependencies {
 	implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
 	implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
 	implementation("androidx.navigation:navigation-compose:2.8.4")
+	implementation("androidx.fragment:fragment-ktx:1.8.5")
+	implementation("androidx.biometric:biometric:1.1.0")
 
 	implementation("androidx.compose.ui:ui")
 	implementation("androidx.compose.ui:ui-graphics")

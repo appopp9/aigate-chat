@@ -5,7 +5,7 @@ import java.util.UUID
 
 enum class AttachmentKind { IMAGE, FILE }
 
-/** نوع API: سازگار با OpenAI یا سازگار با Anthropic */
+/** no'e API: sazegar ba OpenAI ya Anthropic */
 enum class ProviderType { OPENAI, ANTHROPIC }
 
 @Serializable
@@ -28,15 +28,19 @@ data class ChatMessage(
 	val attachments: List<Attachment> = emptyList(),
 	val createdAt: Long = System.currentTimeMillis(),
 	val error: String? = null,
-	/** نسخه‌های مختلف پاسخ (تولید دوباره) */
+	/** nosakhe haye mokhtalefe pasokh (tolide dobare) */
 	val variants: List<String> = emptyList(),
 	val variantIndex: Int = 0,
 	val promptTokens: Int = 0,
 	val completionTokens: Int = 0,
 	val costUsd: Double = 0.0,
 	val modelName: String = "",
+	/** payam sanjagh shode */
+	val pinned: Boolean = false,
+	/** agar pasokh nesfe mande bashad (max_tokens) */
+	val truncated: Boolean = false,
 ) {
-	/** متن فعالِ نمایش‌داده‌شده با در نظر گرفتن نسخه‌ی انتخابی */
+	/** matne fa'al ba dar nazar gereftane nosakhe entekhabi */
 	val activeText: String
 		get() = if (variants.isEmpty()) content else variants.getOrElse(variantIndex) { content }
 
@@ -44,7 +48,15 @@ data class ChatMessage(
 		get() = if (variants.isEmpty()) 1 else variants.size
 }
 
-/** یک سرویس‌دهنده‌ی API */
+/** gheymate har model be dollar baraye har yek million token */
+@Serializable
+data class ModelPricing(
+	val model: String = "",
+	val inputPricePerM: Double = 0.0,
+	val outputPricePerM: Double = 0.0,
+)
+
+/** yek servis dahandeye API */
 @Serializable
 data class Provider(
 	val id: String = UUID.randomUUID().toString(),
@@ -56,33 +68,67 @@ data class Provider(
 	val favoriteModels: List<String> = emptyList(),
 	val defaultModel: String = "",
 	val colorIndex: Int = 0,
-	/** قیمت تقریبی به دلار برای هر یک میلیون توکن */
+	/** gheymate pishfarz (vaghti model gheymate ekhtesasi nadarad) */
 	val inputPricePerM: Double = 0.0,
 	val outputPricePerM: Double = 0.0,
+	/** gheymate ekhtesasi be ezaye har model */
+	val modelPricing: List<ModelPricing> = emptyList(),
 	val createdAt: Long = System.currentTimeMillis(),
-)
+) {
+	fun pricingFor(model: String): ModelPricing {
+		val found = modelPricing.firstOrNull { it.model == model }
+		return found ?: ModelPricing(model, inputPricePerM, outputPricePerM)
+	}
+}
 
 enum class ConnectionState { UNKNOWN, TESTING, ONLINE, OFFLINE }
 
-/** وضعیت اتصال (فقط در حافظه، ذخیره نمی‌شود) */
+/** vaz'iate ettesal (faghat dar hafeze, zakhire nemishavad) */
 data class ProviderStatus(
 	val state: ConnectionState = ConnectionState.UNKNOWN,
 	val latencyMs: Long = 0L,
 	val message: String = "",
 )
 
+/** naghsh / shakhsiat */
+@Serializable
+data class Persona(
+	val id: String = UUID.randomUUID().toString(),
+	val name: String = "",
+	val emoji: String = "🤖",
+	val systemPrompt: String = "",
+	val providerId: String = "",
+	val model: String = "",
+	val temperature: Float = -1f,
+	val createdAt: Long = System.currentTimeMillis(),
+)
+
+/** pramte amade */
+@Serializable
+data class PromptItem(
+	val id: String = UUID.randomUUID().toString(),
+	val title: String = "",
+	val body: String = "",
+	val shortcut: String = "",
+	val createdAt: Long = System.currentTimeMillis(),
+)
+
 @Serializable
 data class Conversation(
 	val id: String = UUID.randomUUID().toString(),
-	val title: String = "گفتگوی جدید",
+	val title: String = "goftogooye jadid",
 	val providerId: String = "",
 	val model: String = "",
 	val messages: List<ChatMessage> = emptyList(),
 	val updatedAt: Long = System.currentTimeMillis(),
 	val pinned: Boolean = false,
-	/** شاخه‌ای کردن گفتگو */
+	/** shakhe'i kardane goftogoo */
 	val parentId: String? = null,
 	val branchedFromMessageId: String? = null,
+	/** naghshe entekhab shode baraye in goftogoo */
+	val personaId: String = "",
+	/** kholaseye sanjagh shode dar bala */
+	val summary: String = "",
 ) {
 	val promptTokens: Int get() = messages.sumOf { it.promptTokens }
 	val completionTokens: Int get() = messages.sumOf { it.completionTokens }
@@ -97,6 +143,19 @@ data class MemoryItem(
 	val enabled: Boolean = true,
 )
 
+/** masrafe mahane baraye budje */
+@Serializable
+data class UsageRecord(
+	val month: String = "",
+	val providerId: String = "",
+	val model: String = "",
+	val promptTokens: Int = 0,
+	val completionTokens: Int = 0,
+	val costUsd: Double = 0.0,
+)
+
+enum class FontScale { SMALL, MEDIUM, LARGE }
+
 @Serializable
 data class AppSettings(
 	val systemPrompt: String = "You are a helpful assistant. Always answer in the user's language.",
@@ -104,16 +163,26 @@ data class AppSettings(
 	val streaming: Boolean = true,
 	val sendFilesAsBase64: Boolean = true,
 	val darkMode: Boolean = false,
-	/** ایندکس تم رنگی */
+	/** indexe teme rangi */
 	val themeIndex: Int = 0,
 	val hapticsEnabled: Boolean = true,
 	val showTokenStats: Boolean = true,
-	/** حافظه‌ی بلندمدت */
+	/** hafezeye bolandmodat */
 	val memoryEnabled: Boolean = true,
 	val memory: List<MemoryItem> = emptyList(),
-	/** در صورت خطا، پیشنهاد استفاده از API دیگر */
+	/** dar soorate khata, pishnahade estefade az API digar */
 	val askFallback: Boolean = true,
 	val maxTokens: Int = 4096,
+	/** andazeye font goftogoo */
+	val fontScale: FontScale = FontScale.MEDIUM,
+	/** ghofle app ba asare angosht */
+	val appLockEnabled: Boolean = false,
+	/** budje mahane be dollar; sefr = bedoone mahdoodiat */
+	val monthlyBudgetUsd: Double = 0.0,
+	/** darsadi ke hoshdar dade mishavad */
+	val budgetWarnPercent: Int = 80,
+	/** vaghti budje tamam shod, ersal motevaghef shavad */
+	val blockOverBudget: Boolean = false,
 )
 
 @Serializable
@@ -122,4 +191,7 @@ data class AppState(
 	val conversations: List<Conversation> = emptyList(),
 	val settings: AppSettings = AppSettings(),
 	val currentConversationId: String = "",
+	val personas: List<Persona> = emptyList(),
+	val prompts: List<PromptItem> = emptyList(),
+	val usage: List<UsageRecord> = emptyList(),
 )

@@ -12,6 +12,9 @@ import com.aigate.chat.model.ChatMessage
 import com.aigate.chat.model.ConnectionState
 import com.aigate.chat.model.Conversation
 import com.aigate.chat.model.MemoryItem
+import com.aigate.chat.model.Persona
+import com.aigate.chat.model.PromptItem
+import com.aigate.chat.model.UsageRecord
 import com.aigate.chat.model.Provider
 import com.aigate.chat.model.ProviderStatus
 import com.aigate.chat.model.ProviderType
@@ -67,6 +70,11 @@ data class UiState(
 	val statuses: Map<String, ProviderStatus> = emptyMap(),
 	val fallback: FallbackRequest? = null,
 	val compare: CompareState = CompareState(),
+	val personas: List<Persona> = emptyList(),
+	val prompts: List<PromptItem> = emptyList(),
+	val usage: List<UsageRecord> = emptyList(),
+	val unlocked: Boolean = false,
+	val budgetWarned: Boolean = false,
 ) {
 	val current: Conversation?
 		get() = conversations.firstOrNull { it.id == currentId }
@@ -77,6 +85,18 @@ data class UiState(
 	}
 
 	fun providerById(id: String): Provider? = providers.firstOrNull { it.id == id }
+
+	fun personaOf(conversation: Conversation?): Persona? {
+		if (conversation == null || conversation.personaId.isBlank()) return null
+		return personas.firstOrNull { it.id == conversation.personaId }
+	}
+
+	/** hazineye mahe jari be dollar */
+	val monthCost: Double
+		get() {
+			val month = currentMonthKey()
+			return usage.filter { it.month == month }.sumOf { it.costUsd }
+		}
 
 	val sortedConversations: List<Conversation>
 		get() = conversations.sortedWith(
@@ -92,6 +112,14 @@ data class SearchHit(
 	val snippet: String,
 	val role: String,
 )
+
+/** kelide mahe jari mesle 2026-08 */
+fun currentMonthKey(): String {
+	val calendar = java.util.Calendar.getInstance()
+	val year = calendar.get(java.util.Calendar.YEAR)
+	val month = calendar.get(java.util.Calendar.MONTH) + 1
+	return year.toString() + "-" + (if (month < 10) "0" else "") + month.toString()
+}
 
 class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -119,6 +147,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 				conversations = conversations,
 				settings = loaded.settings,
 				currentId = currentId,
+				personas = loaded.personas,
+				prompts = if (loaded.prompts.isEmpty()) defaultPrompts() else loaded.prompts,
+				usage = loaded.usage,
+				unlocked = !loaded.settings.appLockEnabled,
 			)
 		}
 	}
@@ -134,6 +166,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 					conversations = snapshot.conversations,
 					settings = snapshot.settings,
 					currentConversationId = snapshot.currentId,
+					personas = snapshot.personas,
+					prompts = snapshot.prompts,
+					usage = snapshot.usage,
 				)
 			)
 		}
@@ -407,8 +442,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 	}
 
 	private fun buildSystemPrompt(): String {
-		val settings = _state.value.settings
-		val sb = StringBuilder(settings.systemPrompt.trim())
+		val s = _state.value
+		val settings = s.settings
+		val persona = s.personaOf(s.current)
+		val base = if (persona != null && persona.systemPrompt.isNotBlank()) {
+			persona.systemPrompt.trim()
+		} else {
+			settings.systemPrompt.trim()
+		}
+		val sb = StringBuilder(base)
 		if (settings.memoryEnabled) {
 			val active = settings.memory.filter { it.enabled && it.text.isNotBlank() }
 			if (active.isNotEmpty()) {
@@ -452,6 +494,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		val provider = s.providerOf(conversation)
 		if (provider == null) {
 			showToast("اول یک API اضافه و انتخاب کن")
+			return
+		}
+		if (overBudget()) {
+			showToast("budjeye mahane tamam shode — az tanzimat taghir bede")
 			return
 		}
 		val body = text.trim()
@@ -625,7 +671,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 			TokenCounter.countHistory(history) + TokenCounter.countText(buildSystemPrompt())
 		}
 		val completionTokens = if (usageCompletion > 0) usageCompletion else TokenCounter.countText(answer)
-		val cost = TokenCounter.estimateCost(provider, promptTokens, completionTokens)
+		val cost = TokenCounter.estimateCost(provider, model, promptTokens, completionTokens)
+		recordUsage(provider.id, model, promptTokens, completionTokens, cost)
 		updateConversation(conversationId) { conversation ->
 			conversation.copy(
 				updatedAt = System.currentTimeMillis(),
@@ -636,6 +683,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 							completionTokens = completionTokens,
 							costUsd = cost,
 							modelName = model,
+							truncated = looksTruncated(answer),
 						)
 					} else {
 						message
@@ -903,7 +951,220 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		}
 	}
 
-	// ---------------- مقایسه‌ی دو مدل ----------------
+	// ---------------- naghsh ha (persona) ----------------
+
+	fun addPersona(persona: Persona) {
+		val s = _state.value
+		_state.value = s.copy(personas = s.personas + persona)
+		persist()
+		showToast("naghsh sakhte shod")
+	}
+
+	fun updatePersona(persona: Persona) {
+		val s = _state.value
+		_state.value = s.copy(personas = s.personas.map { if (it.id == persona.id) persona else it })
+		persist()
+	}
+
+	fun deletePersona(id: String) {
+		val s = _state.value
+		_state.value = s.copy(
+			personas = s.personas.filterNot { it.id == id },
+			conversations = s.conversations.map {
+				if (it.personaId == id) it.copy(personaId = "") else it
+			},
+		)
+		persist()
+	}
+
+	/** naghsh ra be goftogooye fa'al bede (model va API-e naghsh ham e'mal mishavad) */
+	fun applyPersona(conversationId: String, personaId: String) {
+		val s = _state.value
+		val persona = s.personas.firstOrNull { it.id == personaId }
+		updateConversation(conversationId) { conversation ->
+			if (persona == null) {
+				conversation.copy(personaId = "")
+			} else {
+				conversation.copy(
+					personaId = persona.id,
+					providerId = persona.providerId.ifBlank { conversation.providerId },
+					model = persona.model.ifBlank { conversation.model },
+				)
+			}
+		}
+		persist()
+	}
+
+	// ---------------- prompt haye amade ----------------
+
+	private fun defaultPrompts(): List<PromptItem> = listOf(
+		PromptItem(title = "kholase kon", body = "matne zir ra dar 5 bande kootah kholase kon:\n\n", shortcut = "sum"),
+		PromptItem(title = "tarjome be farsi", body = "matne zir ra ravan be farsi tarjome kon:\n\n", shortcut = "fa"),
+		PromptItem(title = "bazbini code", body = "in code ra baresi kon va bug ha va behbood ha ra begoo:\n\n", shortcut = "code"),
+	)
+
+	fun addPrompt(item: PromptItem) {
+		val s = _state.value
+		_state.value = s.copy(prompts = s.prompts + item)
+		persist()
+	}
+
+	fun updatePrompt(item: PromptItem) {
+		val s = _state.value
+		_state.value = s.copy(prompts = s.prompts.map { if (it.id == item.id) item else it })
+		persist()
+	}
+
+	fun deletePrompt(id: String) {
+		val s = _state.value
+		_state.value = s.copy(prompts = s.prompts.filterNot { it.id == id })
+		persist()
+	}
+
+	// ---------------- pin kardane payam ----------------
+
+	fun toggleMessagePin(messageId: String) {
+		val conversation = _state.value.current ?: return
+		updateConversation(conversation.id) { c ->
+			c.copy(
+				messages = c.messages.map {
+					if (it.id == messageId) it.copy(pinned = !it.pinned) else it
+				}
+			)
+		}
+		persist()
+	}
+
+	// ---------------- ghofle app ----------------
+
+	fun setUnlocked(value: Boolean) {
+		_state.value = _state.value.copy(unlocked = value)
+	}
+
+	// ---------------- budje ----------------
+
+	private fun recordUsage(
+		providerId: String,
+		model: String,
+		promptTokens: Int,
+		completionTokens: Int,
+		cost: Double,
+	) {
+		val month = currentMonthKey()
+		val s = _state.value
+		val existing = s.usage.firstOrNull {
+			it.month == month && it.providerId == providerId && it.model == model
+		}
+		val updated = if (existing == null) {
+			s.usage + UsageRecord(month, providerId, model, promptTokens, completionTokens, cost)
+		} else {
+			s.usage.map {
+				if (it === existing) {
+					it.copy(
+						promptTokens = it.promptTokens + promptTokens,
+						completionTokens = it.completionTokens + completionTokens,
+						costUsd = it.costUsd + cost,
+					)
+				} else {
+					it
+				}
+			}
+		}
+		_state.value = _state.value.copy(usage = updated)
+		checkBudget()
+	}
+
+	private fun checkBudget() {
+		val s = _state.value
+		val budget = s.settings.monthlyBudgetUsd
+		if (budget <= 0.0) return
+		val spent = s.monthCost
+		val percent = (spent / budget) * 100.0
+		if (percent >= 100.0) {
+			showToast("budjeye mahane tamam shod: " + TokenCounter.formatCost(spent))
+		} else if (percent >= s.settings.budgetWarnPercent && !s.budgetWarned) {
+			_state.value = _state.value.copy(budgetWarned = true)
+			showToast("hoshdar: " + percent.toInt() + "% budje masraf shode")
+		}
+	}
+
+	fun resetMonthUsage() {
+		val month = currentMonthKey()
+		val s = _state.value
+		_state.value = s.copy(usage = s.usage.filterNot { it.month == month }, budgetWarned = false)
+		persist()
+		showToast("masrafe in mah sefr shod")
+	}
+
+	private fun overBudget(): Boolean {
+		val s = _state.value
+		val budget = s.settings.monthlyBudgetUsd
+		if (budget <= 0.0 || !s.settings.blockOverBudget) return false
+		return s.monthCost >= budget
+	}
+
+	// ---------------- edame dadane pasokhe nesfe ----------------
+
+	private fun looksTruncated(text: String): Boolean {
+		val trimmed = text.trimEnd()
+		if (trimmed.length < 80) return false
+		val last = trimmed.last()
+		val enders = ".!?\u061F\u060C:;)]}\u00BB\"'\u06D4"
+		val openFences = Regex("```").findAll(trimmed).count()
+		if (openFences % 2 == 1) return true
+		return !enders.contains(last)
+	}
+
+	/** edameye pasokhi ke nesfe mande */
+	fun continueMessage(messageId: String) {
+		val s = _state.value
+		val conversation = s.current ?: return
+		val provider = s.providerOf(conversation)
+		if (provider == null) {
+			showToast("API entekhab nashode")
+			return
+		}
+		val message = conversation.messages.firstOrNull { it.id == messageId } ?: return
+		val existing = message.activeText
+		val history = historyFor(conversation.id, messageId) + message.copy(content = existing) +
+			ChatMessage(role = "user", content = "Continue exactly from where you stopped. Do not repeat previous text.")
+		val usedModel = conversation.model.ifBlank { provider.defaultModel }
+		_state.value = _state.value.copy(isGenerating = true)
+		GenerationService.start(getApplication(), "AiGate", "edameye pasokh")
+		generationJob?.cancel()
+		generationJob = viewModelScope.launch {
+			val result = client.complete(
+				provider,
+				usedModel,
+				s.settings,
+				buildSystemPrompt(),
+				history,
+			)
+			result.fold(
+				onSuccess = { extra ->
+					val joined = existing.trimEnd() + "\n" + extra.trimStart()
+					setMessageText(conversation.id, messageId, joined, message.variants.isNotEmpty())
+					updateConversation(conversation.id) { c ->
+						c.copy(
+							messages = c.messages.map {
+								if (it.id == messageId) {
+									it.copy(truncated = looksTruncated(joined))
+								} else {
+									it
+								}
+							}
+						)
+					}
+				},
+				onFailure = { error -> showToast("edame nashod: " + (error.message ?: "khata")) },
+			)
+			_state.value = _state.value.copy(isGenerating = false)
+			GenerationService.stop(getApplication())
+			persist()
+		}
+	}
+
+	// ---------------- moghayeseye do model ----------------
 
 	fun setComparePrompt(prompt: String) {
 		_state.value = _state.value.copy(compare = _state.value.compare.copy(prompt = prompt))
@@ -959,7 +1220,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 							running = false,
 							text = text,
 							tokens = promptTokens + completionTokens,
-							cost = TokenCounter.estimateCost(provider, promptTokens, completionTokens),
+							cost = TokenCounter.estimateCost(
+							provider,
+							side.model.ifBlank { provider.defaultModel },
+							promptTokens,
+							completionTokens,
+						),
 							elapsedMs = elapsed,
 						)
 					}

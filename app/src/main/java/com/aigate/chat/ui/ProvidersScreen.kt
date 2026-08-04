@@ -47,6 +47,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.aigate.chat.model.ConnectionState
+import com.aigate.chat.model.ModelPricing
 import com.aigate.chat.model.Provider
 import com.aigate.chat.model.ProviderType
 import com.aigate.chat.ui.components.NeoBox
@@ -264,6 +265,18 @@ fun ProvidersScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 					onRefreshModels = { viewModel.refreshProviderModels(provider.id) },
 					onDelete = { viewModel.deleteProvider(provider.id) },
 					onToggleFavorite = { model -> viewModel.toggleFavoriteModel(provider.id, model) },
+					onSetModelPrice = { model, inPrice, outPrice ->
+						val rest = provider.modelPricing.filter { row -> row.model != model }
+						viewModel.updateProvider(
+							provider.copy(
+								modelPricing = rest + ModelPricing(
+									model = model,
+									inputPricePerM = inPrice,
+									outputPricePerM = outPrice,
+								)
+							)
+						)
+					},
 					onSetDefaultModel = { model ->
 						viewModel.updateProvider(provider.copy(defaultModel = model))
 					},
@@ -283,6 +296,7 @@ private fun ProviderCard(
 	onRefreshModels: () -> Unit,
 	onDelete: () -> Unit,
 	onToggleFavorite: (String) -> Unit,
+	onSetModelPrice: (String, Double, Double) -> Unit,
 	onSetDefaultModel: (String) -> Unit,
 ) {
 	var modelQuery by remember { mutableStateOf("") }
@@ -300,6 +314,8 @@ private fun ProviderCard(
 		ConnectionState.TESTING -> "در حال تست…"
 		ConnectionState.UNKNOWN -> "نامشخص"
 	}
+
+	var priceModel by remember { mutableStateOf("") }
 
 	val filtered = remember(modelQuery, provider.models, provider.favoriteModels) {
 		val q = modelQuery.trim()
@@ -424,6 +440,60 @@ private fun ProviderCard(
 							)
 							if (provider.defaultModel == model) {
 								NeoChip(text = "پیش‌فرض")
+							}
+							Spacer(Modifier.width(6.dp))
+							val price = provider.pricingFor(model)
+							NeoChip(
+								text = "$" + price.inputPricePerM + "/" + price.outputPricePerM,
+								onClick = { priceModel = if (priceModel == model) "" else model },
+							)
+						}
+						if (priceModel == model) {
+							val price = provider.pricingFor(model)
+							var inText by remember(model) { mutableStateOf(price.inputPricePerM.toString()) }
+							var outText by remember(model) { mutableStateOf(price.outputPricePerM.toString()) }
+							Column(
+								modifier = Modifier.fillMaxWidth(),
+								verticalArrangement = Arrangement.spacedBy(6.dp),
+							) {
+								Text(
+									text = "gheymate in model (dollar be ezaye 1M token)",
+									style = MaterialTheme.typography.labelSmall,
+									color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+								)
+								Row(verticalAlignment = Alignment.CenterVertically) {
+									Box(modifier = Modifier.weight(1f)) {
+										NeoTextField(
+											value = inText,
+											onValueChange = { inText = it },
+											placeholder = "vorodi",
+											modifier = Modifier.fillMaxWidth(),
+										)
+									}
+									Spacer(Modifier.width(6.dp))
+									Box(modifier = Modifier.weight(1f)) {
+										NeoTextField(
+											value = outText,
+											onValueChange = { outText = it },
+											placeholder = "khoroji",
+											modifier = Modifier.fillMaxWidth(),
+										)
+									}
+									Spacer(Modifier.width(6.dp))
+									NeoIconButton(
+										icon = Icons.Filled.Check,
+										boxSize = 40.dp,
+										contentDescription = "zakhire gheymat",
+										onClick = {
+											onSetModelPrice(
+												model,
+												inText.trim().toDoubleOrNull() ?: 0.0,
+												outText.trim().toDoubleOrNull() ?: 0.0,
+											)
+											priceModel = ""
+										},
+									)
+								}
 							}
 						}
 					}

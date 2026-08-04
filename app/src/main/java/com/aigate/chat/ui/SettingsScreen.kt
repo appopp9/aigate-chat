@@ -35,7 +35,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.aigate.chat.model.FontScale
 import com.aigate.chat.ui.components.NeoBox
+import com.aigate.chat.ui.components.NeoChip
 import com.aigate.chat.ui.components.NeoButton
 import com.aigate.chat.ui.components.NeoIconButton
 import com.aigate.chat.ui.theme.NeoThemes
@@ -236,6 +238,90 @@ fun SettingsScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 								contentDescription = "افزودن",
 							)
 						}
+					}
+				}
+			}
+
+			// andazeye ghalam
+			item {
+				SectionCard("andazeye ghalam") {
+					Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+						NeoChip(
+							text = "koochak",
+							selected = settings.fontScale == FontScale.SMALL,
+							onClick = { viewModel.updateSettings(settings.copy(fontScale = FontScale.SMALL)) },
+						)
+						NeoChip(
+							text = "motevaset",
+							selected = settings.fontScale == FontScale.MEDIUM,
+							onClick = { viewModel.updateSettings(settings.copy(fontScale = FontScale.MEDIUM)) },
+						)
+						NeoChip(
+							text = "bozorg",
+							selected = settings.fontScale == FontScale.LARGE,
+							onClick = { viewModel.updateSettings(settings.copy(fontScale = FontScale.LARGE)) },
+						)
+					}
+				}
+			}
+
+			// ghofle app
+			item {
+				SectionCard("ghofle barname") {
+					Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+						ToggleRow("ghofl ba asare angosht ya ramz", settings.appLockEnabled) {
+							viewModel.updateSettings(settings.copy(appLockEnabled = it))
+						}
+						Text(
+							"ba faal kardan, har bar bazkardane barname ehraze hoviat lazem ast.",
+							style = MaterialTheme.typography.labelSmall,
+							color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+						)
+					}
+				}
+			}
+
+			// budje
+			item {
+				SectionCard("budjeye mahane") {
+					Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+						Text(
+							"masrafe in mah: $" + ((state.monthCost * 1000).roundToInt() / 1000.0),
+							style = MaterialTheme.typography.bodyMedium,
+							color = MaterialTheme.colorScheme.onSurface,
+						)
+						Text(
+							"saghfe budje (dollar): " + ((settings.monthlyBudgetUsd * 100).roundToInt() / 100.0),
+							style = MaterialTheme.typography.bodyMedium,
+							color = MaterialTheme.colorScheme.onSurface,
+						)
+						Slider(
+							value = settings.monthlyBudgetUsd.toFloat(),
+							onValueChange = {
+								viewModel.updateSettings(settings.copy(monthlyBudgetUsd = it.toDouble()))
+							},
+							valueRange = 0f..200f,
+						)
+						Text(
+							"hoshdar dar: " + settings.budgetWarnPercent + "%",
+							style = MaterialTheme.typography.bodyMedium,
+							color = MaterialTheme.colorScheme.onSurface,
+						)
+						Slider(
+							value = settings.budgetWarnPercent.toFloat(),
+							onValueChange = {
+								viewModel.updateSettings(settings.copy(budgetWarnPercent = it.roundToInt()))
+							},
+							valueRange = 10f..100f,
+						)
+						ToggleRow("jelogiri az ersal baad az etmame budje", settings.blockOverBudget) {
+							viewModel.updateSettings(settings.copy(blockOverBudget = it))
+						}
+						NeoButton(
+							text = "sefr kardane masrafe in mah",
+							containerColor = MaterialTheme.colorScheme.surfaceVariant,
+							onClick = { viewModel.resetMonthUsage() },
+						)
 					}
 				}
 			}

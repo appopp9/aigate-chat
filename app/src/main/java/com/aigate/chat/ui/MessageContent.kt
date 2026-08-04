@@ -73,6 +73,7 @@ private fun isPreviewable(lang: String): Boolean {
 fun MessageContent(
 	raw: String,
 	textColor: Color,
+	fontScale: Float = 1f,
 	onToast: (String) -> Unit = {},
 ) {
 	val context = LocalContext.current
@@ -86,7 +87,9 @@ fun MessageContent(
 				is ContentBlock.Text -> {
 					Text(
 						text = block.text,
-						style = MaterialTheme.typography.bodyLarge,
+						style = MaterialTheme.typography.bodyLarge.copy(
+							fontSize = MaterialTheme.typography.bodyLarge.fontSize * fontScale,
+						),
 						color = textColor,
 						modifier = Modifier.fillMaxWidth(),
 					)
