@@ -15,6 +15,9 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
@@ -27,7 +30,9 @@ import com.aigate.chat.ui.LockScreen
 import com.aigate.chat.ui.ProvidersScreen
 import com.aigate.chat.ui.SearchScreen
 import com.aigate.chat.ui.SettingsScreen
+import com.aigate.chat.ui.WebLoginScreen
 import com.aigate.chat.ui.collectAsStateCompat
+import com.aigate.chat.net.WebSessionClient
 import com.aigate.chat.ui.components.LocalFlatStyle
 import com.aigate.chat.ui.components.NeoEasing
 import com.aigate.chat.ui.theme.AiGateTheme
@@ -58,6 +63,7 @@ class MainActivity : FragmentActivity() {
 						LockScreen(onUnlock = { viewModel.setUnlocked(true) })
 					} else {
 						val navController = rememberNavController()
+						var webLoginUrl by rememberSaveable { mutableStateOf(WebSessionClient.DEFAULT_SITE) }
 						val flat = !state.settings.neoStyle
 						val dur = if (flat) 150 else 300
 						val shortDur = if (flat) 110 else 220
@@ -95,7 +101,17 @@ class MainActivity : FragmentActivity() {
 								)
 							}
 							composable("providers") {
-								ProvidersScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
+								ProvidersScreen(
+									viewModel = viewModel,
+									onBack = { navController.popBackStack() },
+									onOpenWebLogin = { url ->
+										webLoginUrl = url
+										navController.navigate("weblogin")
+									},
+								)
+							}
+							composable("weblogin") {
+								WebLoginScreen(url = webLoginUrl, onBack = { navController.popBackStack() })
 							}
 							composable("settings") {
 								SettingsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })

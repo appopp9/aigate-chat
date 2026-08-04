@@ -20,6 +20,7 @@ import com.aigate.chat.model.ProviderStatus
 import com.aigate.chat.model.ProviderType
 import com.aigate.chat.net.AiClient
 import com.aigate.chat.net.StreamEvent
+import com.aigate.chat.net.WebSessionClient
 import com.aigate.chat.service.GenerationService
 import com.aigate.chat.util.AttachmentUtils
 import com.aigate.chat.util.Exporter
@@ -193,6 +194,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		type: ProviderType,
 		onResult: (List<String>) -> Unit,
 	) {
+		if (type == ProviderType.WEB) {
+			val webModels = listOf("DeepSeek", "DeepSeek-R1 (DeepThink)")
+			showToast("دو مدل وب اضافه شد")
+			onResult(webModels)
+			return
+		}
 		_state.value = _state.value.copy(isFetchingModels = true)
 		viewModelScope.launch {
 			val result = client.listModels(baseUrl, authKey, type)
@@ -215,7 +222,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		val provider = _state.value.providerById(providerId) ?: return
 		setStatus(providerId, ProviderStatus(ConnectionState.TESTING))
 		viewModelScope.launch {
-			val ping = client.ping(provider.baseUrl, provider.authKey, provider.type)
+			val ping = if (provider.type == ProviderType.WEB) {
+				WebSessionClient.checkSession(getApplication(), provider)
+			} else {
+				client.ping(provider.baseUrl, provider.authKey, provider.type)
+			}
 			setStatus(
 				providerId,
 				ProviderStatus(
@@ -248,13 +259,21 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		outputPrice: Double,
 	) {
 		val s = _state.value
+		val isWeb = type == ProviderType.WEB
+		val webModels = listOf("DeepSeek", "DeepSeek-R1 (DeepThink)")
+		val finalModels = if (isWeb && models.isEmpty()) webModels else models
+		val finalUrl = if (isWeb) {
+			baseUrl.trim().ifBlank { WebSessionClient.DEFAULT_SITE }
+		} else {
+			AiClient.normalizeBaseUrl(baseUrl)
+		}
 		val provider = Provider(
-			name = name.ifBlank { "API " + (s.providers.size + 1) },
-			baseUrl = AiClient.normalizeBaseUrl(baseUrl),
+			name = name.ifBlank { if (isWeb) "DeepSeek (وب)" else "API " + (s.providers.size + 1) },
+			baseUrl = finalUrl,
 			authKey = authKey.trim(),
 			type = type,
-			models = models,
-			defaultModel = models.firstOrNull().orEmpty(),
+			models = finalModels,
+			defaultModel = finalModels.firstOrNull().orEmpty(),
 			colorIndex = s.providers.size % 6,
 			inputPricePerM = inputPrice,
 			outputPricePerM = outputPrice,
@@ -565,8 +584,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 			var usagePrompt = 0
 			var usageCompletion = 0
 
-			if (settings.streaming) {
-				client.streamChat(provider, usedModel, settings, systemPrompt, history).collect { event ->
+			val webMode = provider.type == ProviderType.WEB
+			val streamFlow = if (webMode) {
+				WebSessionClient.streamChat(getApplication(), provider, usedModel, history)
+			} else {
+				client.streamChat(provider, usedModel, settings, systemPrompt, history)
+			}
+			if (settings.streaming || webMode) {
+				streamFlow.collect { event ->
 					when (event) {
 						is StreamEvent.Delta -> {
 							builder.append(event.text)
@@ -594,7 +619,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 			}
 
 			// agar stream shekast khord, yek bar ba halate gheyre stream talash kon
-			if (failure != null && builder.isEmpty() && settings.streaming) {
+			if (failure != null && builder.isEmpty() && settings.streaming && !webMode) {
 				val retry = client.complete(provider, usedModel, settings, systemPrompt, history)
 				retry.fold(
 					onSuccess = { text ->

@@ -50,6 +50,7 @@ import com.aigate.chat.model.ConnectionState
 import com.aigate.chat.model.ModelPricing
 import com.aigate.chat.model.Provider
 import com.aigate.chat.model.ProviderType
+import com.aigate.chat.net.WebSessionClient
 import com.aigate.chat.ui.components.NeoBox
 import com.aigate.chat.ui.components.NeoButton
 import com.aigate.chat.ui.components.NeoChip
@@ -93,7 +94,11 @@ fun NeoTextField(
 }
 
 @Composable
-fun ProvidersScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
+fun ProvidersScreen(
+	viewModel: ChatViewModel,
+	onBack: () -> Unit,
+	onOpenWebLogin: (String) -> Unit = {},
+) {
 	val state by viewModel.state.collectAsStateCompat()
 	val haptics = rememberHaptics(state.settings.hapticsEnabled)
 
@@ -162,6 +167,36 @@ fun ProvidersScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 								text = "Anthropic Compatible",
 								selected = type == ProviderType.ANTHROPIC,
 								onClick = { type = ProviderType.ANTHROPIC },
+							)
+							NeoChip(
+								text = "نشست وب (DeepSeek)",
+								selected = type == ProviderType.WEB,
+								onClick = {
+									type = ProviderType.WEB
+									baseUrl = WebSessionClient.DEFAULT_SITE
+								},
+							)
+						}
+						if (type == ProviderType.WEB) {
+							Spacer(Modifier.height(10.dp))
+							Text(
+								"در این حالت کلید API لازم نیست. یک بار در سایت لاگین کن؛ بعد از این پیام‌ها خودکار در همان سایت ارسال می‌شود و پاسخ در چت نشان داده می‌شود.",
+								style = MaterialTheme.typography.labelSmall,
+								color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+							)
+							Spacer(Modifier.height(6.dp))
+							Text(
+								"هشدار: این روش به ساختار صفحه‌ی سایت وابسته است، با تغییر سایت می‌شکند، گاهی کپچا می‌خواهد و ممکن است خلاف قوانین سرویس باشد.",
+								style = MaterialTheme.typography.labelSmall,
+								color = MaterialTheme.colorScheme.error,
+							)
+							Spacer(Modifier.height(8.dp))
+							NeoButton(
+								text = "ورود به سایت و لاگین",
+								onClick = {
+									haptics.tap()
+									onOpenWebLogin(baseUrl.ifBlank { WebSessionClient.DEFAULT_SITE })
+								},
 							)
 						}
 						Spacer(Modifier.height(10.dp))

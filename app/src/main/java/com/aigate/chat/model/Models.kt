@@ -6,7 +6,7 @@ import java.util.UUID
 enum class AttachmentKind { IMAGE, FILE }
 
 /** no'e API: sazegar ba OpenAI ya Anthropic */
-enum class ProviderType { OPENAI, ANTHROPIC }
+enum class ProviderType { OPENAI, ANTHROPIC, WEB }
 
 @Serializable
 data class Attachment(
