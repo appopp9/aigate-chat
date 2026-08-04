@@ -232,6 +232,20 @@ class AiClient {
 
 	// ---------------- request ----------------
 
+	private fun errorText(code: Int, body: String): String {
+		val base = "HTTP " + code + " - " + body.take(400)
+		val low = body.lowercase()
+		val hint = when {
+			low.contains("do_request_failed") || low.contains("upstream error") ->
+				"\n\nراهنما: این خطا از خود سرویس API است و یعنی این مدل روی سرور در دسترس نیست. یک مدل دیگر انتخاب کن."
+			code == 401 || code == 403 -> "\n\nراهنما: کلید API معتبر نیست."
+			code == 404 -> "\n\nراهنما: آدرس Base URL یا نام مدل اشتباه است."
+			code == 429 -> "\n\nراهنما: محدودیت نرخ یا اتمام اعتبار."
+			else -> ""
+		}
+		return base + hint
+	}
+
 	private fun chatPath(type: ProviderType): String =
 		if (type == ProviderType.ANTHROPIC) "messages" else "chat/completions"
 
@@ -317,7 +331,7 @@ class AiClient {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) {
 					val errorBody = response.body?.string().orEmpty()
-					emit(StreamEvent.Failure("HTTP " + response.code + " - " + errorBody.take(500)))
+					emit(StreamEvent.Failure(errorText(response.code, errorBody)))
 					return@flow
 				}
 				val source = response.body?.source()
@@ -404,7 +418,7 @@ class AiClient {
 				val text = response.body?.string().orEmpty()
 				if (!response.isSuccessful) {
 					return@withContext Result.failure<String>(
-						RuntimeException("HTTP " + response.code + " - " + text.take(500))
+						RuntimeException(errorText(response.code, text))
 					)
 				}
 				val content = parseWholeBody(text, provider.type).orEmpty()
@@ -447,7 +461,7 @@ class AiClient {
 						if (id != null) ids.add(id)
 					}
 				}
-				Result.success(ids.distinct().sorted())
+				Result.success(ids.distinct())
 			}
 		} catch (t: Throwable) {
 			Result.failure<List<String>>(t)
