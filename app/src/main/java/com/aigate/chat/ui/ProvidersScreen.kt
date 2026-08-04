@@ -98,7 +98,7 @@ fun ProvidersScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 
 	var name by remember { mutableStateOf("") }
 	var baseUrl by remember { mutableStateOf("https://api.aigate.shop/v1") }
-	var apiKey by remember { mutableStateOf("") }
+	var authKey by remember { mutableStateOf("") }
 	var type by remember { mutableStateOf(ProviderType.OPENAI) }
 	var inputPrice by remember { mutableStateOf("") }
 	var outputPrice by remember { mutableStateOf("") }
@@ -179,8 +179,8 @@ fun ProvidersScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 						)
 						Spacer(Modifier.height(8.dp))
 						NeoTextField(
-							value = apiKey,
-							onValueChange = { apiKey = it },
+							value = authKey,
+							onValueChange = { authKey = it },
 							placeholder = "API Key",
 							modifier = Modifier.fillMaxWidth(),
 						)
@@ -212,7 +212,7 @@ fun ProvidersScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 								containerColor = MaterialTheme.colorScheme.secondaryContainer,
 								onClick = {
 									haptics.tap()
-									viewModel.fetchModels(baseUrl, apiKey, type) { models ->
+									viewModel.fetchModels(baseUrl, authKey, type) { models ->
 										fetchedModels = models
 									}
 								},
@@ -225,14 +225,14 @@ fun ProvidersScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 									viewModel.addProvider(
 										name = name,
 										baseUrl = baseUrl,
-										apiKey = apiKey,
+										authKey = authKey,
 										type = type,
 										models = fetchedModels,
 										inputPrice = inputPrice.toDoubleOrNull() ?: 0.0,
 										outputPrice = outputPrice.toDoubleOrNull() ?: 0.0,
 									)
 									name = ""
-									apiKey = ""
+									authKey = ""
 									inputPrice = ""
 									outputPrice = ""
 									fetchedModels = emptyList()

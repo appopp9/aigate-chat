@@ -2,52 +2,67 @@ package com.aigate.chat.util
 
 import com.aigate.chat.model.ChatMessage
 import com.aigate.chat.model.Provider
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 /**
- * شمارش توکن‌ها (تقریبی) و تخمین هزینه بر اساس قیمت‌های ذخیره‌شده‌ی Provider.
- * تقریب ساده: ۱ توکن ≈ ۴ کاراکتر انگلیسی / ~۱.۲ کاراکتر فارسی.
+ * شمارش تقریبی توکن و تخمین هزینه.
+ * محاسبه کاملاً محلی است و هیچ درخواستی به سرور نمی‌زند.
  */
 object TokenCounter {
 
-	private val TOKENIZE_REGEX = Regex("\\w+|[^\\w\\s]|\\s+")
-
-	private fun estimateTokens(s: String): Int {
-		if (s.isEmpty()) return 0
-		// ترکیب: تعداد کلمات/نشانه‌ها + تخمین برای متن فارسی/غیرفضا
-		val tokens = TOKENIZE_REGEX.findAll(s).count()
-		val nonLatin = s.count { it.code > 127 } / 2
-		return tokens + nonLatin / 2
+	/** حروف لاتین تقریباً ۴ کاراکتر به ازای هر توکن، فارسی تقریباً ۲ کاراکتر */
+	fun countText(text: String): Int {
+		if (text.isEmpty()) return 0
+		var ascii = 0
+		var wide = 0
+		for (ch in text) {
+			if (ch.code < 128) ascii++ else wide++
+		}
+		val estimate = (ascii / 4.0) + (wide / 2.0)
+		return max(1, estimate.roundToInt())
 	}
 
-	fun countText(text: String): Int = estimateTokens(text)
-
 	fun countMessage(message: ChatMessage): Int {
-		var total = estimateTokens(message.content)
+		var total = countText(message.activeText) + 4
 		for (a in message.attachments) {
-			a.textContent?.let { total += estimateTokens(it) }
+			val textContent = a.textContent
+			total += if (textContent != null) {
+				countText(textContent)
+			} else {
+				// تخمین تقریبی برای تصویر/فایل باینری
+				765
+			}
 		}
 		return total
 	}
 
-	fun countHistory(history: List<ChatMessage>): Int =
-		history.sumOf { countMessage(it) }
-
-	fun estimateCost(provider: Provider, promptTokens: Int, completionTokens: Int): Double {
-		val inPrice = if (provider.inputPricePerM > 0.0) provider.inputPricePerM else 0.0
-		val outPrice = if (provider.outputPricePerM > 0.0) provider.outputPricePerM else 0.0
-		return (promptTokens.toDouble() * inPrice + completionTokens.toDouble() * outPrice) / 1_000_000.0
+	fun countHistory(history: List<ChatMessage>): Int {
+		var total = 0
+		for (m in history) total += countMessage(m)
+		return total
 	}
 
-	fun formatTokens(count: Int): String =
-		when {
-			count >= 1000 -> String.format("%.1fK", count / 1000.0)
-			else -> count.toString()
-		}
+	/** هزینه برحسب دلار بر اساس قیمت هر یک میلیون توکن */
+	fun estimateCost(provider: Provider?, promptTokens: Int, completionTokens: Int): Double {
+		if (provider == null) return 0.0
+		val input = provider.inputPricePerM * (promptTokens / 1_000_000.0)
+		val output = provider.outputPricePerM * (completionTokens / 1_000_000.0)
+		return input + output
+	}
 
-	fun formatCost(cost: Double): String =
-		when {
-			cost <= 0.0 -> "—"
-			cost < 0.01 -> String.format("$%.6f", cost)
-			else -> String.format("$%.4f", cost)
+	fun formatTokens(count: Int): String = when {
+		count >= 1_000_000 -> ((count / 100_000).toDouble() / 10.0).toString() + "M"
+		count >= 1_000 -> ((count / 100).toDouble() / 10.0).toString() + "K"
+		else -> count.toString()
+	}
+
+	fun formatCost(cost: Double): String {
+		if (cost <= 0.0) return "$0"
+		return when {
+			cost < 0.01 -> "$" + ((cost * 1_000_000).roundToInt() / 1_000_000.0).toString()
+			cost < 1.0 -> "$" + ((cost * 10_000).roundToInt() / 10_000.0).toString()
+			else -> "$" + ((cost * 100).roundToInt() / 100.0).toString()
 		}
+	}
 }

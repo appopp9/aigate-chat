@@ -154,13 +154,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 
 	fun fetchModels(
 		baseUrl: String,
-		apiKey: String,
+		authKey: String,
 		type: ProviderType,
 		onResult: (List<String>) -> Unit,
 	) {
 		_state.value = _state.value.copy(isFetchingModels = true)
 		viewModelScope.launch {
-			val result = client.listModels(baseUrl, apiKey, type)
+			val result = client.listModels(baseUrl, authKey, type)
 			_state.value = _state.value.copy(isFetchingModels = false)
 			result.fold(
 				onSuccess = { models ->
@@ -180,7 +180,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		val provider = _state.value.providerById(providerId) ?: return
 		setStatus(providerId, ProviderStatus(ConnectionState.TESTING))
 		viewModelScope.launch {
-			val ping = client.ping(provider.baseUrl, provider.apiKey, provider.type)
+			val ping = client.ping(provider.baseUrl, provider.authKey, provider.type)
 			setStatus(
 				providerId,
 				ProviderStatus(
@@ -206,7 +206,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 	fun addProvider(
 		name: String,
 		baseUrl: String,
-		apiKey: String,
+		authKey: String,
 		type: ProviderType,
 		models: List<String>,
 		inputPrice: Double,
@@ -216,7 +216,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		val provider = Provider(
 			name = name.ifBlank { "API " + (s.providers.size + 1) },
 			baseUrl = AiClient.normalizeBaseUrl(baseUrl),
-			apiKey = apiKey.trim(),
+			authKey = authKey.trim(),
 			type = type,
 			models = models,
 			defaultModel = models.firstOrNull().orEmpty(),
@@ -257,7 +257,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		val provider = _state.value.providerById(providerId) ?: return
 		_state.value = _state.value.copy(isFetchingModels = true)
 		viewModelScope.launch {
-			val result = client.listModels(provider.baseUrl, provider.apiKey, provider.type)
+			val result = client.listModels(provider.baseUrl, provider.authKey, provider.type)
 			_state.value = _state.value.copy(isFetchingModels = false)
 			result.fold(
 				onSuccess = { models ->
@@ -544,6 +544,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 						setMessageText(conversationId, assistantMessageId, text, asVariant)
 					},
 					onFailure = { error -> failure = error.message ?: "خطا" },
+				)
+			}
+
+			// agar stream shekast khord, yek bar ba halate gheyre stream talash kon
+			if (failure != null && builder.isEmpty() && settings.streaming) {
+				val retry = client.complete(provider, usedModel, settings, systemPrompt, history)
+				retry.fold(
+					onSuccess = { text ->
+						if (text.isNotEmpty()) {
+							builder.append(text)
+							setMessageText(conversationId, assistantMessageId, text, asVariant)
+							failure = null
+						}
+					},
+					onFailure = { error ->
+						failure = (failure ?: "") + " | retry: " + (error.message ?: "khata")
+					},
 				)
 			}
 

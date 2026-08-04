@@ -11,9 +11,10 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -38,7 +39,7 @@ sealed interface StreamEvent {
 
 data class PingResult(val ok: Boolean, val latencyMs: Long, val message: String)
 
-/** کلاینت عمومی برای API های سازگار با OpenAI و Anthropic */
+/** client omumi baraye API haye sazegar ba OpenAI va Anthropic */
 class AiClient {
 
 	private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -53,7 +54,7 @@ class AiClient {
 		fun normalizeBaseUrl(raw: String): String {
 			var b = raw.trim().trimEnd('/')
 			if (b.isEmpty()) return b
-			if (!b.startsWith("http://") && !b.startsWith("https://")) b = "https://$b"
+			if (!b.startsWith("http://") && !b.startsWith("https://")) b = "https://" + b
 			return b
 		}
 
@@ -63,59 +64,66 @@ class AiClient {
 	private fun endpoint(baseUrl: String, path: String): String =
 		normalizeBaseUrl(baseUrl) + "/" + path
 
-	private fun applyAuth(builder: Request.Builder, type: ProviderType, apiKey: String) {
-		if (apiKey.isBlank()) return
+	private fun applyAuth(builder: Request.Builder, type: ProviderType, authKey: String) {
+		if (authKey.isBlank()) return
 		if (type == ProviderType.ANTHROPIC) {
-			builder.addHeader("x-api-key", apiKey)
+			builder.addHeader("x-api-key", authKey)
 			builder.addHeader("anthropic-version", ANTHROPIC_VERSION)
 		} else {
-			builder.addHeader("Authorization", "Bearer " + apiKey)
+			builder.addHeader("Authorization", "Bearer " + authKey)
 		}
 	}
 
-	// ---------------- بدنه‌ی OpenAI ----------------
+	// ---------------- OpenAI body ----------------
 
-	private fun openAiContent(m: ChatMessage, sendFilesAsBase64: Boolean): JsonElement {
-		if (m.attachments.isEmpty()) return JsonPrimitive(m.activeText)
-		return buildJsonArray {
-			if (m.activeText.isNotBlank()) {
-				add(buildJsonObject {
+	private fun openAiParts(m: ChatMessage, sendFilesAsBase64: Boolean): List<JsonObject> {
+		val parts = ArrayList<JsonObject>()
+		if (m.activeText.isNotBlank()) {
+			parts.add(buildJsonObject {
+				put("type", "text")
+				put("text", m.activeText)
+			})
+		}
+		for (a in m.attachments) {
+			val dataUrl = a.dataUrl
+			val textContent = a.textContent
+			if (a.kind == AttachmentKind.IMAGE && dataUrl != null) {
+				parts.add(buildJsonObject {
+					put("type", "image_url")
+					putJsonObject("image_url") { put("url", dataUrl) }
+				})
+			} else if (textContent != null) {
+				parts.add(buildJsonObject {
 					put("type", "text")
-					put("text", m.activeText)
+					put(
+						"text",
+						"\n\n--- file: " + a.name + " ---\n" + textContent + "\n--- end of file ---"
+					)
+				})
+			} else if (dataUrl != null && sendFilesAsBase64) {
+				parts.add(buildJsonObject {
+					put("type", "file")
+					putJsonObject("file") {
+						put("filename", a.name)
+						put("file_data", dataUrl)
+					}
+				})
+			} else {
+				parts.add(buildJsonObject {
+					put("type", "text")
+					put("text", "[attachment: " + a.name + " (" + a.mimeType + ")]")
 				})
 			}
-			for (a in m.attachments) {
-				val dataUrl = a.dataUrl
-				val textContent = a.textContent
-				when {
-					a.kind == AttachmentKind.IMAGE && dataUrl != null -> add(buildJsonObject {
-						put("type", "image_url")
-						putJsonObject("image_url") { put("url", dataUrl) }
-					})
-
-					textContent != null -> add(buildJsonObject {
-						put("type", "text")
-						put(
-							"text",
-							"\n\n--- فایل پیوست: " + a.name + " ---\n" + textContent + "\n--- پایان فایل ---"
-						)
-					})
-
-					dataUrl != null && sendFilesAsBase64 -> add(buildJsonObject {
-						put("type", "file")
-						putJsonObject("file") {
-							put("filename", a.name)
-							put("file_data", dataUrl)
-						}
-					})
-
-					else -> add(buildJsonObject {
-						put("type", "text")
-						put("text", "[فایل پیوست: " + a.name + " (" + a.mimeType + ")]")
-					})
-				}
-			}
 		}
+		return parts
+	}
+
+	private fun openAiContent(m: ChatMessage, sendFilesAsBase64: Boolean): JsonElement {
+		// baraye payam matni sade, content bayad String bashad (sazegari bishtar ba gateway ha)
+		if (m.attachments.isEmpty()) return JsonPrimitive(m.activeText)
+		val parts = openAiParts(m, sendFilesAsBase64)
+		if (parts.isEmpty()) return JsonPrimitive(m.activeText)
+		return JsonArray(parts)
 	}
 
 	private fun buildOpenAiBody(
@@ -136,6 +144,9 @@ class AiClient {
 				})
 			}
 			for (m in history) {
+				if (m.role != "user" && m.role != "assistant") continue
+				// payam haye khali ra nafrest (gateway error midahad)
+				if (m.activeText.isBlank() && m.attachments.isEmpty()) continue
 				add(buildJsonObject {
 					put("role", m.role)
 					put("content", openAiContent(m, settings.sendFilesAsBase64))
@@ -144,72 +155,54 @@ class AiClient {
 		})
 	}.toString()
 
-	// ---------------- بدنه‌ی Anthropic ----------------
+	// ---------------- Anthropic body ----------------
 
-	private fun anthropicContent(m: ChatMessage): JsonElement = buildJsonArray {
-		var anyAdded = false
+	private fun anthropicParts(m: ChatMessage): List<JsonObject> {
+		val parts = ArrayList<JsonObject>()
 		if (m.activeText.isNotBlank()) {
-			add(buildJsonObject {
+			parts.add(buildJsonObject {
 				put("type", "text")
 				put("text", m.activeText)
 			})
-			anyAdded = true
 		}
 		for (a in m.attachments) {
 			val dataUrl = a.dataUrl
 			val textContent = a.textContent
-			when {
-				a.kind == AttachmentKind.IMAGE && dataUrl != null -> {
-					val base64 = dataUrl.substringAfter("base64,", "")
-					if (base64.isNotEmpty()) {
-						add(buildJsonObject {
-							put("type", "image")
-							putJsonObject("source") {
-								put("type", "base64")
-								put("media_type", a.mimeType.ifBlank { "image/jpeg" })
-								put("data", base64)
-							}
-						})
+			val base64 = dataUrl?.substringAfter("base64,", "").orEmpty()
+			if (a.kind == AttachmentKind.IMAGE && base64.isNotEmpty()) {
+				parts.add(buildJsonObject {
+					put("type", "image")
+					putJsonObject("source") {
+						put("type", "base64")
+						put("media_type", a.mimeType.ifBlank { "image/jpeg" })
+						put("data", base64)
 					}
-				}
-
-				textContent != null -> add(buildJsonObject {
+				})
+			} else if (textContent != null) {
+				parts.add(buildJsonObject {
 					put("type", "text")
 					put(
 						"text",
-						"\n\n--- فایل پیوست: " + a.name + " ---\n" + textContent + "\n--- پایان فایل ---"
+						"\n\n--- file: " + a.name + " ---\n" + textContent + "\n--- end of file ---"
 					)
 				})
-
-				dataUrl != null && a.mimeType == "application/pdf" -> {
-					val base64 = dataUrl.substringAfter("base64,", "")
-					if (base64.isNotEmpty()) {
-						add(buildJsonObject {
-							put("type", "document")
-							putJsonObject("source") {
-								put("type", "base64")
-								put("media_type", "application/pdf")
-								put("data", base64)
-							}
-						})
+			} else if (a.mimeType == "application/pdf" && base64.isNotEmpty()) {
+				parts.add(buildJsonObject {
+					put("type", "document")
+					putJsonObject("source") {
+						put("type", "base64")
+						put("media_type", "application/pdf")
+						put("data", base64)
 					}
-				}
-
-				else -> add(buildJsonObject {
+				})
+			} else {
+				parts.add(buildJsonObject {
 					put("type", "text")
-					put("text", "[فایل پیوست: " + a.name + " (" + a.mimeType + ")]")
+					put("text", "[attachment: " + a.name + " (" + a.mimeType + ")]")
 				})
 			}
 		}
-		if (m.attachments.isNotEmpty()) {
-			anyAdded = true
-		}
-		if (!anyAdded) {
-			add(buildJsonObject {
-				put("type", "text")
-				put("text", ".")
-			})
-		}
+		return parts
 	}
 
 	private fun buildAnthropicBody(
@@ -227,15 +220,17 @@ class AiClient {
 		put("messages", buildJsonArray {
 			for (m in history) {
 				if (m.role != "user" && m.role != "assistant") continue
+				val parts = anthropicParts(m)
+				if (parts.isEmpty()) continue
 				add(buildJsonObject {
 					put("role", m.role)
-					put("content", anthropicContent(m))
+					put("content", JsonArray(parts))
 				})
 			}
 		})
 	}.toString()
 
-	// ---------------- درخواست ----------------
+	// ---------------- request ----------------
 
 	private fun chatPath(type: ProviderType): String =
 		if (type == ProviderType.ANTHROPIC) "messages" else "chat/completions"
@@ -256,19 +251,19 @@ class AiClient {
 	private fun postRequest(provider: Provider, path: String, body: String, stream: Boolean): Request {
 		val builder = Request.Builder()
 			.url(endpoint(provider.baseUrl, path))
-			.addHeader("Content-Type", "application/json")
 			.post(body.toRequestBody("application/json; charset=utf-8".toMediaType()))
-		applyAuth(builder, provider.type, provider.apiKey)
+		applyAuth(builder, provider.type, provider.authKey)
 		if (stream) builder.addHeader("Accept", "text/event-stream")
 		return builder.build()
 	}
 
-	// ---------------- پارس پاسخ ----------------
+	// ---------------- parse ----------------
 
 	private fun parseOpenAiDelta(payload: String): String? = try {
-		json.parseToJsonElement(payload).jsonObject["choices"]
-			?.jsonArray?.firstOrNull()?.jsonObject?.get("delta")
-			?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
+		val choice = json.parseToJsonElement(payload).jsonObject["choices"]
+			?.jsonArray?.firstOrNull()?.jsonObject
+		val delta = choice?.get("delta")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
+		delta ?: choice?.get("message")?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
 	} catch (t: Throwable) {
 		null
 	}
@@ -292,26 +287,18 @@ class AiClient {
 				?: root["usage"]?.jsonObject
 			val input = usage?.get("input_tokens")?.jsonPrimitive?.intOrNull
 			val output = usage?.get("output_tokens")?.jsonPrimitive?.intOrNull
-			if (input != null || output != null) {
-				StreamEvent.Usage(input ?: 0, output ?: 0)
-			} else {
-				null
-			}
+			if (input != null || output != null) StreamEvent.Usage(input ?: 0, output ?: 0) else null
 		} else {
 			val usage = root["usage"]?.jsonObject
 			val input = usage?.get("prompt_tokens")?.jsonPrimitive?.intOrNull
 			val output = usage?.get("completion_tokens")?.jsonPrimitive?.intOrNull
-			if (input != null || output != null) {
-				StreamEvent.Usage(input ?: 0, output ?: 0)
-			} else {
-				null
-			}
+			if (input != null || output != null) StreamEvent.Usage(input ?: 0, output ?: 0) else null
 		}
 	} catch (t: Throwable) {
 		null
 	}
 
-	// ---------------- چت استریمی ----------------
+	// ---------------- streaming chat ----------------
 
 	fun streamChat(
 		provider: Provider,
@@ -320,24 +307,34 @@ class AiClient {
 		systemPrompt: String,
 		history: List<ChatMessage>,
 	): Flow<StreamEvent> = flow {
+		if (model.isBlank()) {
+			emit(StreamEvent.Failure("model entekhab nashode — az menu-ye bala yek model entekhab kon"))
+			return@flow
+		}
 		val body = buildBody(provider, model, settings, systemPrompt, history, true)
 		val request = postRequest(provider, chatPath(provider.type), body, true)
 		try {
 			client.newCall(request).execute().use { response ->
 				if (!response.isSuccessful) {
 					val errorBody = response.body?.string().orEmpty()
-					emit(StreamEvent.Failure("HTTP " + response.code + " — " + errorBody.take(500)))
+					emit(StreamEvent.Failure("HTTP " + response.code + " - " + errorBody.take(500)))
 					return@flow
 				}
 				val source = response.body?.source()
 				if (source == null) {
-					emit(StreamEvent.Failure("پاسخ خالی از سرور"))
+					emit(StreamEvent.Failure("pasokhe khali az server"))
 					return@flow
 				}
+				var sawData = false
+				val raw = StringBuilder()
 				while (true) {
 					val line = source.readUtf8Line() ?: break
 					if (line.isBlank()) continue
-					if (!line.startsWith("data:")) continue
+					if (!line.startsWith("data:")) {
+						if (raw.length < 4000) raw.append(line).append("\n")
+						continue
+					}
+					sawData = true
 					val payload = line.removePrefix("data:").trim()
 					if (payload == "[DONE]") break
 					val delta = if (provider.type == ProviderType.ANTHROPIC) {
@@ -349,14 +346,44 @@ class AiClient {
 					val usage = parseUsage(payload, provider.type)
 					if (usage != null) emit(usage)
 				}
+				if (!sawData) {
+					// server SSE nadad — shayad javab yekja bud
+					val whole = raw.toString().trim()
+					val text = if (whole.isNotEmpty()) parseWholeBody(whole, provider.type) else null
+					if (text != null && text.isNotEmpty()) {
+						emit(StreamEvent.Delta(text))
+					} else {
+						emit(StreamEvent.Failure("stream pasokhi nadasht"))
+					}
+				}
 			}
 			emit(StreamEvent.Done)
 		} catch (t: Throwable) {
-			emit(StreamEvent.Failure(t.message ?: "خطای شبکه"))
+			emit(StreamEvent.Failure(t.message ?: "khataye shabake"))
 		}
 	}.flowOn(Dispatchers.IO)
 
-	// ---------------- چت غیراستریمی ----------------
+	private fun parseWholeBody(text: String, type: ProviderType): String? = try {
+		val root = json.parseToJsonElement(text).jsonObject
+		if (type == ProviderType.ANTHROPIC) {
+			val blocks = root["content"]?.jsonArray
+			val sb = StringBuilder()
+			if (blocks != null) {
+				for (block in blocks) {
+					val piece = block.jsonObject["text"]?.jsonPrimitive?.contentOrNull
+					if (piece != null) sb.append(piece)
+				}
+			}
+			sb.toString()
+		} else {
+			root["choices"]?.jsonArray?.firstOrNull()?.jsonObject?.get("message")
+				?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull
+		}
+	} catch (t: Throwable) {
+		null
+	}
+
+	// ---------------- non-streaming chat ----------------
 
 	suspend fun complete(
 		provider: Provider,
@@ -365,6 +392,11 @@ class AiClient {
 		systemPrompt: String,
 		history: List<ChatMessage>,
 	): Result<String> = withContext(Dispatchers.IO) {
+		if (model.isBlank()) {
+			return@withContext Result.failure<String>(
+				RuntimeException("model entekhab nashode — az menu-ye bala yek model entekhab kon")
+			)
+		}
 		try {
 			val body = buildBody(provider, model, settings, systemPrompt, history, false)
 			val request = postRequest(provider, chatPath(provider.type), body, false)
@@ -372,46 +404,36 @@ class AiClient {
 				val text = response.body?.string().orEmpty()
 				if (!response.isSuccessful) {
 					return@withContext Result.failure<String>(
-						RuntimeException("HTTP " + response.code + " — " + text.take(500))
+						RuntimeException("HTTP " + response.code + " - " + text.take(500))
 					)
 				}
-				val root = json.parseToJsonElement(text).jsonObject
-				val content = if (provider.type == ProviderType.ANTHROPIC) {
-					val blocks = root["content"]?.jsonArray
-					val sb = StringBuilder()
-					if (blocks != null) {
-						for (block in blocks) {
-							val piece = block.jsonObject["text"]?.jsonPrimitive?.contentOrNull
-							if (piece != null) sb.append(piece)
-						}
-					}
-					sb.toString()
+				val content = parseWholeBody(text, provider.type).orEmpty()
+				if (content.isEmpty()) {
+					Result.failure<String>(RuntimeException("pasokhe khali: " + text.take(300)))
 				} else {
-					root["choices"]?.jsonArray?.firstOrNull()?.jsonObject?.get("message")
-						?.jsonObject?.get("content")?.jsonPrimitive?.contentOrNull.orEmpty()
+					Result.success(content)
 				}
-				Result.success(content)
 			}
 		} catch (t: Throwable) {
 			Result.failure<String>(t)
 		}
 	}
 
-	// ---------------- لیست مدل‌ها ----------------
+	// ---------------- models ----------------
 
 	suspend fun listModels(
 		baseUrl: String,
-		apiKey: String,
+		authKey: String,
 		type: ProviderType,
 	): Result<List<String>> = withContext(Dispatchers.IO) {
 		try {
 			val builder = Request.Builder().url(endpoint(baseUrl, "models")).get()
-			applyAuth(builder, type, apiKey)
+			applyAuth(builder, type, authKey)
 			client.newCall(builder.build()).execute().use { response ->
 				val text = response.body?.string().orEmpty()
 				if (!response.isSuccessful) {
 					return@withContext Result.failure<List<String>>(
-						RuntimeException("HTTP " + response.code + " — " + text.take(300))
+						RuntimeException("HTTP " + response.code + " - " + text.take(300))
 					)
 				}
 				val root = json.parseToJsonElement(text).jsonObject
@@ -432,29 +454,29 @@ class AiClient {
 		}
 	}
 
-	// ---------------- تست اتصال ----------------
+	// ---------------- ping ----------------
 
-	suspend fun ping(baseUrl: String, apiKey: String, type: ProviderType): PingResult =
+	suspend fun ping(baseUrl: String, authKey: String, type: ProviderType): PingResult =
 		withContext(Dispatchers.IO) {
 			val started = System.currentTimeMillis()
 			try {
 				val builder = Request.Builder().url(endpoint(baseUrl, "models")).get()
-				applyAuth(builder, type, apiKey)
+				applyAuth(builder, type, authKey)
 				client.newCall(builder.build()).execute().use { response ->
 					val elapsed = System.currentTimeMillis() - started
 					val bodyText = response.body?.string().orEmpty()
 					if (response.isSuccessful) {
-						PingResult(true, elapsed, "اتصال سالم")
+						PingResult(true, elapsed, "ettesal salem")
 					} else {
-						PingResult(false, elapsed, "HTTP " + response.code + " — " + bodyText.take(160))
+						PingResult(false, elapsed, "HTTP " + response.code + " - " + bodyText.take(160))
 					}
 				}
 			} catch (t: Throwable) {
-				PingResult(false, System.currentTimeMillis() - started, t.message ?: "خطای شبکه")
+				PingResult(false, System.currentTimeMillis() - started, t.message ?: "khataye shabake")
 			}
 		}
 
-	// ---------------- تولید تصویر ----------------
+	// ---------------- image ----------------
 
 	suspend fun generateImage(
 		provider: Provider,
@@ -473,7 +495,7 @@ class AiClient {
 				val text = response.body?.string().orEmpty()
 				if (!response.isSuccessful) {
 					return@withContext Result.failure<String>(
-						RuntimeException("HTTP " + response.code + " — " + text.take(400))
+						RuntimeException("HTTP " + response.code + " - " + text.take(400))
 					)
 				}
 				val first = json.parseToJsonElement(text).jsonObject["data"]
@@ -483,7 +505,7 @@ class AiClient {
 				when {
 					url != null -> Result.success(url)
 					b64 != null -> Result.success("data:image/png;base64," + b64)
-					else -> Result.failure<String>(RuntimeException("خروجی تصویر پیدا نشد"))
+					else -> Result.failure<String>(RuntimeException("khoruji-e tasvir peyda nashod"))
 				}
 			}
 		} catch (t: Throwable) {

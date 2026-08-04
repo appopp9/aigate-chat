@@ -50,7 +50,7 @@ data class Provider(
 	val id: String = UUID.randomUUID().toString(),
 	val name: String = "",
 	val baseUrl: String = "",
-	val apiKey: String = "",
+	val authKey: String = "",
 	val type: ProviderType = ProviderType.OPENAI,
 	val models: List<String> = emptyList(),
 	val favoriteModels: List<String> = emptyList(),
