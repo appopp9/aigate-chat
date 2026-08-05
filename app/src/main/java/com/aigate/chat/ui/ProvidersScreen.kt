@@ -51,6 +51,7 @@ import com.aigate.chat.model.ModelPricing
 import com.aigate.chat.model.Provider
 import com.aigate.chat.model.ProviderType
 import com.aigate.chat.net.WebSessionClient
+import com.aigate.chat.net.WebSites
 import com.aigate.chat.ui.components.NeoBox
 import com.aigate.chat.ui.components.NeoButton
 import com.aigate.chat.ui.components.NeoChip
@@ -170,7 +171,7 @@ fun ProvidersScreen(
 								onClick = { type = ProviderType.ANTHROPIC },
 							)
 							NeoChip(
-								text = "نشست وب (DeepSeek)",
+								text = "نشست وب (لاگین در سایت)",
 								selected = type == ProviderType.WEB,
 								onClick = {
 									type = ProviderType.WEB
@@ -180,53 +181,59 @@ fun ProvidersScreen(
 						}
 						if (type == ProviderType.WEB) {
 							Spacer(Modifier.height(10.dp))
-							NeoBox(
-								modifier = Modifier.fillMaxWidth(),
-								background = MaterialTheme.colorScheme.surfaceVariant,
-							) {
-								Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-									Text(
-										"نشست وب — دو گام",
-										style = MaterialTheme.typography.titleSmall,
-										fontWeight = FontWeight.Bold,
-										color = MaterialTheme.colorScheme.onSurface,
-									)
-									Text(
-										"۱. ورود به سایت و لاگین\n۲. گرفتن چک‌آپ برای اطمینان از اتصال",
-										style = MaterialTheme.typography.bodySmall,
-										color = MaterialTheme.colorScheme.onSurface,
-									)
-									Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-										Box(modifier = Modifier.weight(1f)) {
-											NeoButton(
-												text = "۱. لاگین",
-												modifier = Modifier.fillMaxWidth(),
-												onClick = {
-													haptics.tap()
-													onOpenWebLogin(baseUrl.ifBlank { WebSessionClient.DEFAULT_SITE })
-												},
-											)
-										}
-										Box(modifier = Modifier.weight(1f)) {
-											NeoButton(
-												text = "۲. چک‌آپ",
-												modifier = Modifier.fillMaxWidth(),
-												containerColor = MaterialTheme.colorScheme.secondary,
-												contentColor = MaterialTheme.colorScheme.onSecondary,
-												onClick = {
-													haptics.tap()
-													onOpenWebCheck()
-												},
-											)
-										}
+							Text(
+								"سایت را انتخاب کن:",
+								style = MaterialTheme.typography.labelSmall,
+								color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+							)
+							Spacer(Modifier.height(6.dp))
+							WebSites.all.chunked(2).forEach { pair ->
+								Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+									pair.forEach { webSite ->
+										NeoChip(
+											text = webSite.label,
+											selected = baseUrl.contains(webSite.host),
+											onClick = {
+												haptics.tap()
+												baseUrl = webSite.url
+												if (name.isBlank() || WebSites.all.any { s -> s.label == name }) {
+													name = webSite.label
+												}
+											},
+										)
 									}
-									Text(
-										"کلید API لازم نیست. در این حالت عکس و فایل ارسال نمی‌شود و با تغییر سایت ممکن است بشکند.",
-										style = MaterialTheme.typography.labelSmall,
-										color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-									)
 								}
+								Spacer(Modifier.height(6.dp))
 							}
+							Text(
+								"در این حالت کلید API لازم نیست. یک بار در سایت لاگین کن؛ بعد از این پیام‌ها خودکار در همان سایت ارسال می‌شود و پاسخ در چت نشان داده می‌شود.",
+								style = MaterialTheme.typography.labelSmall,
+								color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
+							)
+							Spacer(Modifier.height(6.dp))
+							Text(
+								"هشدار: این روش به ساختار صفحه‌ی سایت وابسته است، با تغییر سایت می‌شکند، گاهی کپچا می‌خواهد و ممکن است خلاف قوانین سرویس باشد.",
+								style = MaterialTheme.typography.labelSmall,
+								color = MaterialTheme.colorScheme.error,
+							)
+							Spacer(Modifier.height(8.dp))
+							NeoButton(
+								text = "ورود به سایت و لاگین",
+								onClick = {
+									haptics.tap()
+									onOpenWebLogin(baseUrl.ifBlank { WebSessionClient.DEFAULT_SITE })
+								},
+							)
+							Spacer(Modifier.height(8.dp))
+							NeoButton(
+								text = "چک‌آپ نشست وب (۱۰ مرحله)",
+								containerColor = MaterialTheme.colorScheme.secondary,
+								contentColor = MaterialTheme.colorScheme.onSecondary,
+								onClick = {
+									haptics.tap()
+									onOpenWebCheck()
+								},
+							)
 						}
 						Spacer(Modifier.height(10.dp))
 						NeoTextField(

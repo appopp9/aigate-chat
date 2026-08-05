@@ -19,15 +19,18 @@ object VoiceIO {
 		if (tts != null) return
 		tts = TextToSpeech(context.applicationContext) { status ->
 			ready = status == TextToSpeech.SUCCESS
-			val engine = tts
-			if (ready && engine != null) {
-				val fa = Locale("fa", "IR")
-				if (engine.isLanguageAvailable(fa) >= TextToSpeech.LANG_AVAILABLE) {
-					engine.language = fa
-				} else {
-					engine.language = Locale.getDefault()
+			if (ready) {
+				val engine = tts
+				if (engine != null) {
+					val fa = Locale("fa", "IR")
+					val result = engine.isLanguageAvailable(fa)
+					if (result >= TextToSpeech.LANG_AVAILABLE) {
+						engine.language = fa
+					} else {
+						engine.language = Locale.getDefault()
+					}
+					engine.setSpeechRate(1.0f)
 				}
-				engine.setSpeechRate(1.0f)
 			}
 		}
 	}
@@ -57,7 +60,7 @@ object VoiceIO {
 		engine?.shutdown()
 	}
 
-	/** matn ra baraye khandan tamiz mikonad. */
+	/** matn ra baraye khandan tamiz mikonad: code block va neshane haye markdown hazf mishavand. */
 	fun stripMarkdown(raw: String): String {
 		var out = raw
 		out = out.replace(Regex("```[\\s\\S]*?```"), " کد داده شده است. ")

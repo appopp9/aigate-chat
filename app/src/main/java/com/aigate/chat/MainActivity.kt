@@ -17,6 +17,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -26,7 +27,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.aigate.chat.ui.ArtifactScreen
 import com.aigate.chat.ui.ChatScreen
 import com.aigate.chat.ui.ChatViewModel
 import com.aigate.chat.ui.CompareScreen
@@ -34,7 +34,6 @@ import com.aigate.chat.ui.LockScreen
 import com.aigate.chat.ui.ProvidersScreen
 import com.aigate.chat.ui.SearchScreen
 import com.aigate.chat.ui.SettingsScreen
-import com.aigate.chat.ui.UsageScreen
 import com.aigate.chat.ui.WebDiagnosticsScreen
 import com.aigate.chat.ui.WebLoginScreen
 import com.aigate.chat.ui.WebSessionHost
@@ -75,12 +74,13 @@ class MainActivity : FragmentActivity() {
 						val flat = !state.settings.neoStyle
 						val dur = if (flat) 150 else 300
 						val shortDur = if (flat) 110 else 220
-						val webProvider = state.providers.firstOrNull { it.type == ProviderType.WEB }
+						val webSiteUrls = state.providers
+							.filter { it.type == ProviderType.WEB }
+							.map { it.baseUrl.ifBlank { WebSessionClient.DEFAULT_SITE } }
+							.distinct()
 						Box(modifier = Modifier.fillMaxSize()) {
-						if (webProvider != null) {
-							WebSessionHost(
-								url = webProvider.baseUrl.ifBlank { WebSessionClient.DEFAULT_SITE },
-							)
+						for (siteUrl in webSiteUrls) {
+							key(siteUrl) { WebSessionHost(url = siteUrl) }
 						}
 						NavHost(
 							navController = navController,
@@ -113,8 +113,6 @@ class MainActivity : FragmentActivity() {
 									onOpenSettings = { navController.navigate("settings") },
 									onOpenCompare = { navController.navigate("compare") },
 									onOpenSearch = { navController.navigate("search") },
-									onOpenUsage = { navController.navigate("usage") },
-									onOpenArtifact = { navController.navigate("artifact") },
 								)
 							}
 							composable("providers") {
@@ -139,12 +137,6 @@ class MainActivity : FragmentActivity() {
 							}
 							composable("compare") {
 								CompareScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
-							}
-							composable("usage") {
-								UsageScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
-							}
-							composable("artifact") {
-								ArtifactScreen(onBack = { navController.popBackStack() })
 							}
 							composable("search") {
 								SearchScreen(viewModel = viewModel, onBack = { navController.popBackStack() })

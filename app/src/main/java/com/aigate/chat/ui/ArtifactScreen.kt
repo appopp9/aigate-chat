@@ -30,10 +30,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.aigate.chat.ui.components.NeoIconButton
 
-/** matn e artifact e jari. */
+/** matn e artifact e jari; beyn e safhe ha rad o badal mishavad. */
 object ArtifactHolder {
 	var code: String = ""
 
+	/** agar matn HTML e kamel nabashad, an ra dar yek ghaleb e amade mizarad. */
 	fun asHtml(): String {
 		val body = code.trim()
 		val lower = body.lowercase()
@@ -42,33 +43,6 @@ object ArtifactHolder {
 			"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
 			"<style>body{margin:0;padding:12px;font-family:sans-serif;background:#fff;color:#111}</style>" +
 			"</head><body>" + body + "</body></html>"
-	}
-
-	/** aval block e html, agar nabood aval block e code ra barmigardanad. */
-	fun extract(text: String): String {
-		val fences = Regex("```([a-zA-Z0-9+#-]*)\\n([\\s\\S]*?)```").findAll(text).toList()
-		val html = fences.firstOrNull { it.groupValues[1].lowercase().contains("html") }
-		if (html != null) return html.groupValues[2]
-		val svg = fences.firstOrNull { it.groupValues[1].lowercase().contains("svg") }
-		if (svg != null) return svg.groupValues[2]
-		val any = fences.firstOrNull()
-		if (any != null) {
-			val lang = any.groupValues[1].lowercase()
-			val body = any.groupValues[2]
-			if (lang == "css") return "<style>" + body + "</style><div>پیش‌نمایش CSS</div>"
-			if (lang == "js" || lang == "javascript") {
-				return "<div id=\"app\"></div><script>" + body + "</script>"
-			}
-			return body
-		}
-		return text
-	}
-
-	fun hasPreviewable(text: String): Boolean {
-		val lower = text.lowercase()
-		return lower.contains("```html") || lower.contains("```svg") ||
-			lower.contains("```css") || lower.contains("```js") ||
-			lower.contains("```javascript") || lower.contains("<!doctype html")
 	}
 }
 
@@ -116,7 +90,7 @@ fun ArtifactScreen(onBack: () -> Unit) {
 					color = MaterialTheme.colorScheme.onBackground,
 				)
 				Text(
-					"کد زنده در داخل اپ اجرا می‌شود",
+					"کد HTML/CSS/JS زنده اجرا می‌شود",
 					style = MaterialTheme.typography.labelSmall,
 					color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
 				)
@@ -135,7 +109,10 @@ fun ArtifactScreen(onBack: () -> Unit) {
 			)
 		}
 		Box(modifier = Modifier.fillMaxSize()) {
-			AndroidView(factory = { webView }, modifier = Modifier.fillMaxSize())
+			AndroidView(
+				factory = { webView },
+				modifier = Modifier.fillMaxSize(),
+			)
 		}
 	}
 }

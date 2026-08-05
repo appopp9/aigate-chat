@@ -21,9 +21,9 @@ import com.aigate.chat.model.ProviderType
 import com.aigate.chat.net.AiClient
 import com.aigate.chat.net.StreamEvent
 import com.aigate.chat.net.WebSessionClient
+import com.aigate.chat.net.WebSites
 import com.aigate.chat.service.GenerationService
 import com.aigate.chat.util.AttachmentUtils
-import com.aigate.chat.util.ModelRouter
 import com.aigate.chat.util.Exporter
 import com.aigate.chat.util.FileSaver
 import com.aigate.chat.util.TokenCounter
@@ -196,8 +196,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 		onResult: (List<String>) -> Unit,
 	) {
 		if (type == ProviderType.WEB) {
-			val webModels = listOf("DeepSeek", "DeepSeek-R1 (DeepThink)")
-			showToast("دو مدل وب اضافه شد")
+			val site = WebSites.forUrl(baseUrl)
+			val webModels = site.models
+			showToast(site.label + ": " + webModels.size + " مدل اضافه شد")
 			onResult(webModels)
 			return
 		}
@@ -261,7 +262,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 	) {
 		val s = _state.value
 		val isWeb = type == ProviderType.WEB
-		val webModels = listOf("DeepSeek", "DeepSeek-R1 (DeepThink)")
+		val webSite = WebSites.forUrl(baseUrl)
+		val webModels = webSite.models
 		val finalModels = if (isWeb && models.isEmpty()) webModels else models
 		val finalUrl = if (isWeb) {
 			baseUrl.trim().ifBlank { WebSessionClient.DEFAULT_SITE }
@@ -269,7 +271,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 			AiClient.normalizeBaseUrl(baseUrl)
 		}
 		val provider = Provider(
-			name = name.ifBlank { if (isWeb) "DeepSeek (وب)" else "API " + (s.providers.size + 1) },
+			name = name.ifBlank { if (isWeb) webSite.label else "API " + (s.providers.size + 1) },
 			baseUrl = finalUrl,
 			authKey = authKey.trim(),
 			type = type,
@@ -547,29 +549,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 			return
 		}
 
-		val routedModel = if (
-			s.settings.smartRouter &&
-			provider.type != ProviderType.WEB
-		) {
-			val picked = ModelRouter.pick(
-				provider,
-				conversation.model,
-				body,
-				userMessage.attachments.isNotEmpty(),
-			)
-			if (picked.isNotBlank() && picked != conversation.model) {
-				showToast("مسیریاب مدل: " + picked)
-				picked
-			} else {
-				conversation.model
-			}
-		} else {
-			conversation.model
-		}
-
-		val assistant = ChatMessage(role = "assistant", content = "", modelName = routedModel)
+		val assistant = ChatMessage(role = "assistant", content = "", modelName = conversation.model)
 		updateConversation(conversation.id) { it.copy(messages = it.messages + assistant) }
-		startGeneration(conversation.id, assistant.id, provider, routedModel)
+		startGeneration(conversation.id, assistant.id, provider, conversation.model)
 	}
 
 	private fun historyFor(conversationId: String, assistantMessageId: String): List<ChatMessage> {
@@ -650,7 +632,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 			// zakhireye adrese goftogooye site baraye hamin chat
 			if (webMode) {
 				val siteSession = WebSessionClient.lastSessionUrl
-				if (siteSession.contains("/a/chat/s/")) {
+				val marker = WebSites.forUrl(provider.baseUrl).sessionMarker
+				if (siteSession.contains(marker)) {
 					updateConversation(conversationId) { it.copy(webSessionUrl = siteSession) }
 				}
 			}

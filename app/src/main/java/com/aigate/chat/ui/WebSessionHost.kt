@@ -11,6 +11,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.platform.LocalContext
 import com.aigate.chat.net.WebSessionClient
+import com.aigate.chat.net.WebSites
 
 /**
  * WebView e makhfi vali vasl-shode be panjere.
@@ -23,7 +24,8 @@ import com.aigate.chat.net.WebSessionClient
 @Composable
 fun WebSessionHost(url: String) {
 	val context = LocalContext.current
-	val webView = remember {
+	val siteKey = WebSites.forUrl(url).host
+	val webView = remember(url) {
 		WebView(context).also { view ->
 			WebSessionClient.configure(view)
 			view.layoutParams = ViewGroup.LayoutParams(
@@ -35,8 +37,8 @@ fun WebSessionHost(url: String) {
 	}
 
 	DisposableEffect(webView) {
-		WebSessionClient.attachHost(webView)
-		onDispose { WebSessionClient.detachHost(webView) }
+		WebSessionClient.attachHost(siteKey, webView)
+		onDispose { WebSessionClient.detachHost(siteKey, webView) }
 	}
 
 	AndroidView(

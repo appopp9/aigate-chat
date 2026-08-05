@@ -36,8 +36,8 @@ object WebSessionClient {
 		"Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
 			"Chrome/124.0.0.0 Mobile Safari/537.36"
 
-	private var host: WebView? = null
-	private var fallbackView: WebView? = null
+	private val hosts = HashMap<String, WebView>()
+	private val fallbacks = HashMap<String, WebView>()
 	private var lastLog: String = ""
 
 	/** adrese goftogooye site baraye chat e feli (bad az ersal khande mishavad) */
@@ -86,10 +86,30 @@ object WebSessionClient {
       else { N.text += j.v; }
       return;
     }
+    if (typeof j.type === 'string'){
+      if (j.type === 'content_block_delta' && j.delta){
+        if (typeof j.delta.text === 'string'){ N.text += j.delta.text; return; }
+        if (typeof j.delta.thinking === 'string'){ N.think += j.delta.thinking; return; }
+      }
+      if (j.type === 'completion' && typeof j.completion === 'string'){ N.text += j.completion; return; }
+      if (j.type === 'message_stop' || j.type === 'message_limit'){ N.done = true; return; }
+    }
+    var snap = (j.v && j.v.message) ? j.v : (j.message ? j : null);
+    if (snap && snap.message && snap.message.content && snap.message.content.parts){
+      var parts = snap.message.content.parts;
+      var joined = '';
+      for (var pi = 0; pi < parts.length; pi++){
+        if (typeof parts[pi] === 'string'){ joined += parts[pi]; }
+      }
+      var role = (snap.message.author && snap.message.author.role) || '';
+      if (joined && role !== 'user' && joined.length >= N.text.length){ N.text = joined; return; }
+    }
     if (j.choices && j.choices[0]){
       var d = j.choices[0].delta || j.choices[0].message;
       if (d){
-        if (typeof d.content === 'string'){ N.text += d.content; }
+        if (typeof d.content === 'string'){
+          if (d.phase === 'think'){ N.think += d.content; } else { N.text += d.content; }
+        }
         if (typeof d.reasoning_content === 'string'){ N.think += d.reasoning_content; }
       }
       if (j.choices[0].finish_reason){ N.done = true; }
@@ -107,7 +127,12 @@ object WebSessionClient {
   function track(url){
     var u = String(url || '');
     if (N.allUrls.length < 60){ N.allUrls.push(u.slice(0, 90)); }
-    return u.indexOf('completion') >= 0 || u.indexOf('chat/comple') >= 0;
+    var hints = window.__aigateHints;
+    if (!hints || !hints.length){ hints = ['completion', 'chat/comple']; }
+    for (var hi = 0; hi < hints.length; hi++){
+      if (u.indexOf(hints[hi]) >= 0){ return true; }
+    }
+    return false;
   }
 
   window.__aigateHook = function(){
@@ -253,6 +278,10 @@ object WebSessionClient {
 (function(){
   function inputEl(){
     return document.querySelector('textarea#chat-input')
+      || document.querySelector('#prompt-textarea')
+      || document.querySelector('div.ProseMirror[contenteditable="true"]')
+      || document.querySelector('[contenteditable="true"][role="textbox"]')
+      || document.querySelector('textarea[placeholder]')
       || document.querySelector('textarea')
       || document.querySelector('[contenteditable="true"]');
   }
@@ -261,7 +290,7 @@ object WebSessionClient {
     return el.textContent || '';
   }
   function blocks(){
-    var list = document.querySelectorAll('div.ds-markdown');
+    var list = document.querySelectorAll('div.ds-markdown, [data-message-author-role="assistant"] div.markdown, div.font-claude-message, div.markdown-content-container');
     if (list.length > 0){ return list; }
     list = document.querySelectorAll('div[class*="markdown"], div[class*="Markdown"]');
     if (list.length > 0){ return list; }
@@ -373,7 +402,16 @@ object WebSessionClient {
       var desc = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
       if (desc && desc.set){ desc.set.call(el, text); } else { el.value = text; }
     } else {
-      el.textContent = text;
+      var sel = window.getSelection();
+      var range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      var typed = false;
+      try { typed = document.execCommand('insertText', false, text); } catch (e){ typed = false; }
+      if (!typed || (el.textContent || '').indexOf(text.slice(0, 12)) < 0){
+        el.textContent = text;
+      }
     }
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -422,8 +460,11 @@ object WebSessionClient {
   window.__aigateDeepThink = function(on){
     var all = document.querySelectorAll('div[role="button"], button, span');
     for (var i = 0; i < all.length; i++){
-      var t = txt(all[i]).toLowerCase();
-      if (t.indexOf('deepthink') >= 0 || t.indexOf('deep think') >= 0){
+      var t = txt(all[i]).toLowerCase().trim();
+      if (t.length > 30){ continue; }
+      if (t.indexOf('deepthink') >= 0 || t.indexOf('deep think') >= 0
+        || t.indexOf('thinking') >= 0 || t.indexOf('extended think') >= 0
+        || t.indexOf('reason') >= 0){
         var active = (all[i].className || '').toLowerCase().indexOf('active') >= 0
           || all[i].getAttribute('aria-pressed') === 'true';
         if ((on === '1' && !active) || (on === '0' && active)){ all[i].click(); }
@@ -511,17 +552,17 @@ object WebSessionClient {
 		view.webViewClient = object : WebViewClient() {
 			override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
 				super.onPageStarted(v, url, favicon)
-				v?.evaluateJavascript(NET_HOOK, null)
+				v?.evaluateJavascript(hintScript(url) + NET_HOOK, null)
 			}
 
 			override fun doUpdateVisitedHistory(v: WebView?, url: String?, isReload: Boolean) {
 				super.doUpdateVisitedHistory(v, url, isReload)
-				v?.evaluateJavascript(NET_HOOK, null)
+				v?.evaluateJavascript(hintScript(url) + NET_HOOK, null)
 			}
 
 			override fun onPageFinished(v: WebView?, url: String?) {
 				super.onPageFinished(v, url)
-				v?.evaluateJavascript(BOOTSTRAP, null)
+				v?.evaluateJavascript(hintScript(url) + BOOTSTRAP, null)
 				CookieManager.getInstance().flush()
 			}
 		}
@@ -530,12 +571,12 @@ object WebSessionClient {
 		cookies.setAcceptThirdPartyCookies(view, true)
 	}
 
-	fun attachHost(view: WebView) {
-		host = view
+	fun attachHost(siteKey: String, view: WebView) {
+		hosts[siteKey] = view
 	}
 
-	fun detachHost(view: WebView) {
-		if (host === view) host = null
+	fun detachHost(siteKey: String, view: WebView) {
+		if (hosts[siteKey] === view) hosts.remove(siteKey)
 	}
 
 	fun persistCookies() {
@@ -544,17 +585,18 @@ object WebSessionClient {
 
 	private suspend fun webView(context: Context, url: String): WebView =
 		withContext(Dispatchers.Main) {
-			val attached = host
+			val key = WebSites.forUrl(url).host
+			val attached = hosts[key]
 			val view = if (attached != null) {
 				attached
 			} else {
-				val existing = fallbackView
+				val existing = fallbacks[key]
 				if (existing != null) {
 					existing
 				} else {
 					val created = WebView(context.applicationContext)
 					configure(created)
-					fallbackView = created
+					fallbacks[key] = created
 					created
 				}
 			}
@@ -572,6 +614,13 @@ object WebSessionClient {
 			return withoutScheme.substringBefore("/").lowercase()
 		}
 		return hostOf(a) == hostOf(b)
+	}
+
+	/** hint haye adrese darkhast e chat baraye site e feli */
+	private fun hintScript(url: String?): String {
+		val site = WebSites.forUrl(url.orEmpty())
+		val list = site.hints.joinToString(",") { jsString(it) }
+		return "window.__aigateHints=[" + list + "];\n"
 	}
 
 	private suspend fun eval(view: WebView, script: String): String =
@@ -739,6 +788,7 @@ object WebSessionClient {
 			return@flow
 		}
 		val url = provider.baseUrl.ifBlank { DEFAULT_SITE }
+		val site = WebSites.forUrl(url)
 		val view = webView(context, url)
 		lastSessionUrl = ""
 
@@ -747,7 +797,7 @@ object WebSessionClient {
 		val needsNav = if (sessionUrl.isNotBlank()) {
 			!currentHref.startsWith(sessionUrl)
 		} else {
-			currentHref.contains("/a/chat/s/")
+			currentHref.contains(site.sessionMarker)
 		}
 		if (needsNav) {
 			val target = if (sessionUrl.isNotBlank()) sessionUrl else url
@@ -923,11 +973,13 @@ object WebSessionClient {
 			return results
 		}
 
+		val site = WebSites.forUrl(url)
+		val attached = hosts.containsKey(site.host)
 		results.add(
 			WebCheck(
-				"۰. وب‌ویو زنده و متصل",
-				host != null,
-				if (host != null) "وب‌ویوی متصل به صفحه فعال است" else "فقط وب‌ویوی پشتیبان",
+				"۰. وب‌ویو زنده و متصل (" + site.label + ")",
+				attached,
+				if (attached) "وب‌ویوی متصل به صفحه فعال است" else "فقط وب‌ویوی پشتیبان",
 			)
 		)
 
@@ -972,8 +1024,8 @@ object WebSessionClient {
 	}
 
 	fun release() {
-		val view = fallbackView
-		fallbackView = null
-		view?.destroy()
+		val views = fallbacks.values.toList()
+		fallbacks.clear()
+		for (v in views) v.destroy()
 	}
 }

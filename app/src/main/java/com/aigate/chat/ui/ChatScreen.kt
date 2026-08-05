@@ -54,10 +54,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Face
-import androidx.compose.material.icons.filled.BarChart
-import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
@@ -114,7 +110,6 @@ import com.aigate.chat.ui.components.NeoBox
 import com.aigate.chat.ui.components.NeoButton
 import com.aigate.chat.ui.components.NeoChip
 import com.aigate.chat.ui.components.NeoIconButton
-import com.aigate.chat.util.VoiceIO
 import com.aigate.chat.ui.theme.AccentPalette
 import com.aigate.chat.util.AttachmentUtils
 import com.aigate.chat.util.TokenCounter
@@ -131,8 +126,6 @@ fun ChatScreen(
 	onOpenSettings: () -> Unit,
 	onOpenCompare: () -> Unit,
 	onOpenSearch: () -> Unit = {},
-	onOpenUsage: () -> Unit = {},
-	onOpenArtifact: () -> Unit = {},
 ) {
 	val state by viewModel.state.collectAsStateCompat()
 	val context = LocalContext.current
@@ -161,15 +154,6 @@ fun ChatScreen(
 	val imagePicker = rememberLauncherForActivityResult(
 		contract = ActivityResultContracts.OpenMultipleDocuments(),
 	) { uris -> viewModel.addAttachments(uris) }
-
-	val speechLauncher = rememberLauncherForActivityResult(
-		contract = ActivityResultContracts.StartActivityForResult(),
-	) { result ->
-		val spoken = VoiceIO.textFromResult(result.data)
-		if (spoken.isNotBlank()) {
-			input = if (input.isBlank()) spoken else input.trim() + " " + spoken
-		}
-	}
 
 	LaunchedEffect(conversation?.messages?.size, state.isGenerating) {
 		val size = conversation?.messages?.size ?: 0
@@ -218,12 +202,6 @@ fun ChatScreen(
 						scope.launch {
 							drawerState.close()
 							onOpenSearch()
-						}
-					},
-					onOpenUsage = {
-						scope.launch {
-							drawerState.close()
-							onOpenUsage()
 						}
 					},
 				)
@@ -347,7 +325,7 @@ fun ChatScreen(
 								},
 							)
 							DropdownMenuItem(
-								text = { Text("تنطیمات") },
+								text = { Text("تنزیمات") },
 								onClick = {
 									showOverflow = false
 									onOpenSettings()
@@ -480,16 +458,6 @@ fun ChatScreen(
 							onChangeModel = { showModelMenu = true },
 							onVariant = { variantIndex -> viewModel.selectVariant(message.id, variantIndex) },
 							onToast = { viewModel.showToast(it) },
-							onSpeak = {
-								haptics.tap()
-								val spoke = VoiceIO.speak(context, message.activeText)
-								if (!spoke) viewModel.showToast("خواندن با صدا در دسترس نیست")
-							},
-							onArtifact = {
-								haptics.strong()
-								ArtifactHolder.code = ArtifactHolder.extract(message.activeText)
-								onOpenArtifact()
-							},
 						)
 					}
 					if (state.isGenerating) {
@@ -559,17 +527,6 @@ fun ChatScreen(
 						}
 					}
 					Row(verticalAlignment = Alignment.Bottom) {
-						NeoIconButton(
-							icon = Icons.Filled.Mic,
-							boxSize = 48.dp,
-							contentDescription = "گفتن با صدا",
-							onClick = {
-								haptics.tap()
-								val ok = runCatching { speechLauncher.launch(VoiceIO.speechIntent()) }.isSuccess
-								if (!ok) viewModel.showToast("تبدیل گفتار به متن در این گوشی نیست")
-							},
-						)
-						Spacer(Modifier.width(6.dp))
 						NeoIconButton(
 							icon = Icons.Filled.AttachFile,
 							boxSize = 48.dp,
@@ -935,8 +892,6 @@ private fun MessageBubble(
 	onChangeModel: () -> Unit,
 	onVariant: (Int) -> Unit,
 	onToast: (String) -> Unit,
-	onSpeak: () -> Unit = {},
-	onArtifact: () -> Unit = {},
 ) {
 	val isUser = message.role == "user"
 	val background = if (isUser) accent else MaterialTheme.colorScheme.surface
@@ -1071,25 +1026,6 @@ private fun MessageBubble(
 					onClick = onDelete,
 					contentDescription = "delete",
 				)
-				if (!isUser) {
-					Spacer(Modifier.width(6.dp))
-					NeoIconButton(
-						icon = Icons.Filled.VolumeUp,
-						boxSize = 44.dp,
-						onClick = onSpeak,
-						contentDescription = "خواندن با صدا",
-					)
-					if (ArtifactHolder.hasPreviewable(message.activeText)) {
-						Spacer(Modifier.width(6.dp))
-						NeoIconButton(
-							icon = Icons.Filled.Code,
-							boxSize = 44.dp,
-							containerColor = MaterialTheme.colorScheme.secondaryContainer,
-							onClick = onArtifact,
-							contentDescription = "اجرای کد",
-						)
-					}
-				}
 				if (message.variantCount > 1) {
 					Spacer(Modifier.width(8.dp))
 					NeoIconButton(
@@ -1372,7 +1308,6 @@ private fun DrawerContent(
 	onOpenSettings: () -> Unit,
 	onOpenCompare: () -> Unit,
 	onOpenSearch: () -> Unit,
-	onOpenUsage: () -> Unit,
 ) {
 	val state by viewModel.state.collectAsStateCompat()
 	val hits = remember(searchQuery, state.conversations) { viewModel.search(searchQuery) }
@@ -1412,23 +1347,17 @@ private fun DrawerContent(
 				contentDescription = "جست‌وجوی سرتاسری",
 			)
 			NeoIconButton(
-				icon = Icons.Filled.BarChart,
-				boxSize = 48.dp,
-				onClick = onOpenUsage,
-				contentDescription = "داشبورد مصرف",
-			)
-			NeoIconButton(
 				icon = Icons.Filled.CompareArrows,
 				boxSize = 48.dp,
 				containerColor = MaterialTheme.colorScheme.secondaryContainer,
 				onClick = onOpenCompare,
-				contentDescription = "مقایسه",
+				contentDescription = "moghayese",
 			)
 			NeoIconButton(
 				icon = Icons.Filled.Settings,
 				boxSize = 48.dp,
 				onClick = onOpenSettings,
-				contentDescription = "تنطیمات",
+				contentDescription = "تنزیمات",
 			)
 			NeoIconButton(
 				icon = Icons.Filled.Add,
