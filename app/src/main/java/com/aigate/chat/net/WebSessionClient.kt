@@ -2,6 +2,7 @@ package com.aigate.chat.net
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -20,10 +21,12 @@ import kotlin.coroutines.resume
 /**
  * halate sevvom: goftogoo az tarighe neshaste morourgar (WebView).
  *
- * ravesh e asli (v8): shabake ra shenood mikonim.
- * fetch e safhe patch mishavad, va vaghti khode site darkhast e /completion ra mizanad,
- * hamin stream (SSE) khande mishavad. digar be class ha va DOM e site vabaste nistim.
- * khandan az DOM faghat fallback ast.
+ * v8.1:
+ *  - hook e shabake dar onPageStarted tazrigh mishavad (ghabl az ejraye bundle e site),
+ *    vagarna app e site reference e ghadimi fetch ra negah midarad va shenood kar nemikonad.
+ *  - fetch + XMLHttpRequest + EventSource har se hook mishavand.
+ *  - khandane DOM ba textContent anjam mishavad (na innerText) chon innerText be layout
+ *    vabaste ast va dar WebView e kuchak khali barmigardad.
  */
 object WebSessionClient {
 
@@ -48,8 +51,445 @@ object WebSessionClient {
 		val calls: Int,
 		val error: String,
 		val text: String,
-		val think: String,
 	)
+
+	// ---------------------------------------------------------------- JS
+
+	/** hook e shabake; bayad ghabl az script haye site ejra shavad. */
+	private val NET_HOOK = """
+(function(){
+  if (!window.__aigateNet){
+    window.__aigateNet = {
+      hooked: false, early: 0, calls: 0, urls: [], allUrls: [], status: 0, frames: 0,
+      text: '', think: '', done: false, err: '', lastPath: '', xhrBuf: '', xhrSeen: 0
+    };
+  }
+  var N = window.__aigateNet;
+
+  window.__aigateFrame = function(line){
+    if (!line){ return; }
+    var s = ('' + line).trim();
+    if (s.indexOf('data:') === 0){ s = s.slice(5).trim(); }
+    if (!s){ return; }
+    if (s === '[DONE]'){ N.done = true; return; }
+    var j = null;
+    try { j = JSON.parse(s); } catch (e){ return; }
+    N.frames++;
+    if (typeof j.p === 'string' && j.p){ N.lastPath = j.p; }
+    if (typeof j.v === 'string'){
+      var path = (typeof j.p === 'string' && j.p) ? j.p : N.lastPath;
+      if (path && path.indexOf('thinking') >= 0){ N.think += j.v; }
+      else { N.text += j.v; }
+      return;
+    }
+    if (j.choices && j.choices[0]){
+      var d = j.choices[0].delta || j.choices[0].message;
+      if (d){
+        if (typeof d.content === 'string'){ N.text += d.content; }
+        if (typeof d.reasoning_content === 'string'){ N.think += d.reasoning_content; }
+      }
+      if (j.choices[0].finish_reason){ N.done = true; }
+    }
+    if (j.error){ N.err = JSON.stringify(j.error).slice(0, 300); }
+  };
+
+  window.__aigateBegin = function(url){
+    N.calls++;
+    N.urls.push(String(url).slice(0, 140));
+    N.text = ''; N.think = ''; N.frames = 0; N.done = false;
+    N.err = ''; N.lastPath = ''; N.xhrBuf = ''; N.xhrSeen = 0;
+  };
+
+  function track(url){
+    var u = String(url || '');
+    if (N.allUrls.length < 60){ N.allUrls.push(u.slice(0, 90)); }
+    return u.indexOf('completion') >= 0 || u.indexOf('chat/comple') >= 0;
+  }
+
+  window.__aigateHook = function(){
+    if (N.hooked){ return 'already'; }
+
+    // ---- fetch ----
+    if (window.fetch){
+      var origFetch = window.fetch;
+      window.fetch = function(input, init){
+        var url = '';
+        try { url = (typeof input === 'string') ? input : ((input && input.url) || ''); } catch (e){ url = ''; }
+        var isChat = track(url);
+        var promise = origFetch.apply(this, arguments);
+        if (!isChat){ return promise; }
+        return promise.then(function(res){
+          try {
+            N.status = res.status;
+            window.__aigateBegin(url);
+            if (!res.body || !res.body.getReader){ N.done = true; return res; }
+            var reader = res.clone().body.getReader();
+            var dec = new TextDecoder();
+            var buf = '';
+            var pump = function(){
+              return reader.read().then(function(r){
+                if (r.done){ if (buf){ window.__aigateFrame(buf); } N.done = true; return; }
+                buf += dec.decode(r.value, { stream: true });
+                var idx;
+                while ((idx = buf.indexOf('\n')) >= 0){
+                  var line = buf.slice(0, idx);
+                  buf = buf.slice(idx + 1);
+                  window.__aigateFrame(line);
+                }
+                return pump();
+              });
+            };
+            pump().catch(function(e){ N.err = 'read:' + e; N.done = true; });
+          } catch (e){ N.err = 'hook:' + e; }
+          return res;
+        }).catch(function(e){
+          N.err = 'fetch:' + e;
+          N.done = true;
+          throw e;
+        });
+      };
+    }
+
+    // ---- XMLHttpRequest ----
+    var OrigXHR = window.XMLHttpRequest;
+    if (OrigXHR && !OrigXHR.__aigate){
+      var Patched = function(){
+        var x = new OrigXHR();
+        var reqUrl = '';
+        var origOpen = x.open;
+        x.open = function(m, u){
+          reqUrl = u || '';
+          return origOpen.apply(x, arguments);
+        };
+        x.addEventListener('readystatechange', function(){
+          var isChat = track(reqUrl);
+          if (!isChat){ return; }
+          if (x.readyState === 2){
+            N.status = x.status;
+            window.__aigateBegin(reqUrl);
+            return;
+          }
+          if (x.readyState >= 3){
+            var raw = '';
+            try { raw = x.responseText || ''; } catch (e){ return; }
+            var chunk = raw.slice(N.xhrSeen);
+            N.xhrSeen = raw.length;
+            var buf = N.xhrBuf + chunk;
+            var idx;
+            while ((idx = buf.indexOf('\n')) >= 0){
+              var line = buf.slice(0, idx);
+              buf = buf.slice(idx + 1);
+              window.__aigateFrame(line);
+            }
+            N.xhrBuf = buf;
+            if (x.readyState === 4){
+              if (N.xhrBuf){ window.__aigateFrame(N.xhrBuf); N.xhrBuf = ''; }
+              N.done = true;
+            }
+          }
+        });
+        return x;
+      };
+      Patched.__aigate = 1;
+      Patched.prototype = OrigXHR.prototype;
+      Patched.UNSENT = 0;
+      Patched.OPENED = 1;
+      Patched.HEADERS_RECEIVED = 2;
+      Patched.LOADING = 3;
+      Patched.DONE = 4;
+      window.XMLHttpRequest = Patched;
+    }
+
+    // ---- EventSource ----
+    if (window.EventSource && !window.EventSource.__aigate){
+      var OrigES = window.EventSource;
+      var PatchedES = function(url, cfg){
+        var es = new OrigES(url, cfg);
+        if (track(url)){
+          window.__aigateBegin(url);
+          es.addEventListener('message', function(ev){ window.__aigateFrame(ev.data); });
+          es.addEventListener('error', function(){ N.done = true; });
+        }
+        return es;
+      };
+      PatchedES.__aigate = 1;
+      PatchedES.prototype = OrigES.prototype;
+      window.EventSource = PatchedES;
+    }
+
+    N.hooked = true;
+    return 'hooked';
+  };
+
+  window.__aigateReset = function(){
+    N.text = ''; N.think = ''; N.frames = 0; N.done = false;
+    N.err = ''; N.status = 0; N.calls = 0; N.urls = []; N.allUrls = [];
+    N.lastPath = ''; N.xhrBuf = ''; N.xhrSeen = 0;
+    return 'reset';
+  };
+
+  window.__aigateState = function(){
+    return 'status=' + N.status
+      + '\nhooked=' + (N.hooked ? '1' : '0')
+      + '\ndone=' + (N.done ? '1' : '0')
+      + '\nframes=' + N.frames
+      + '\ncalls=' + N.calls
+      + '\nerr=' + (N.err || '')
+      + '\n---TEXT---\n' + N.text;
+  };
+
+  window.__aigateHook();
+  N.early = 1;
+  return 'net-hook';
+})();
+"""
+
+	/** komak haye DOM; bad az bar shodane safhe tazrigh mishavad. */
+	private val DOM_HELPERS = """
+(function(){
+  function inputEl(){
+    return document.querySelector('textarea#chat-input')
+      || document.querySelector('textarea')
+      || document.querySelector('[contenteditable="true"]');
+  }
+  function txt(el){
+    if (!el){ return ''; }
+    return el.textContent || '';
+  }
+  function blocks(){
+    var list = document.querySelectorAll('div.ds-markdown');
+    if (list.length > 0){ return list; }
+    list = document.querySelectorAll('div[class*="markdown"], div[class*="Markdown"]');
+    if (list.length > 0){ return list; }
+    list = document.querySelectorAll('[class*="message-content"], [class*="messageContent"], [data-message-author-role]');
+    if (list.length > 0){ return list; }
+    return document.querySelectorAll('[class*="message"] > div, [class*="Message"] > div');
+  }
+  function nodeText(root){
+    var out = '';
+    var kids = root.childNodes;
+    for (var i = 0; i < kids.length; i++){
+      var k = kids[i];
+      if (k.nodeType === 3){ out += k.nodeValue; continue; }
+      if (k.nodeType !== 1){ continue; }
+      var tag = k.tagName.toLowerCase();
+      if (tag === 'pre'){
+        var codeEl = k.querySelector('code');
+        var lang = '';
+        if (codeEl && codeEl.className){
+          var m = codeEl.className.match(/language-([a-zA-Z0-9+#_-]+)/);
+          if (m){ lang = m[1]; }
+        }
+        out += '\n' + '```' + lang + '\n' + txt(codeEl || k) + '\n' + '```' + '\n';
+      } else if (tag === 'br'){
+        out += '\n';
+      } else if (tag === 'button' || tag === 'svg' || tag === 'textarea' || tag === 'input'){
+        out += '';
+      } else {
+        out += nodeText(k);
+        if (tag === 'p' || tag === 'div' || tag === 'li' || tag === 'tr'
+          || tag === 'h1' || tag === 'h2' || tag === 'h3' || tag === 'h4'){
+          out += '\n';
+        }
+      }
+    }
+    return out;
+  }
+
+  window.__aigateReady = function(){ return inputEl() ? '1' : '0'; };
+  window.__aigateBodyLen = function(){ return String(txt(document.body).length); };
+
+  window.__aigateMark = function(){
+    var list = blocks();
+    for (var i = 0; i < list.length; i++){ list[i].setAttribute('data-aigate-seen', '1'); }
+    return String(list.length);
+  };
+  window.__aigateMarkAll = function(){
+    var all = document.querySelectorAll('div,p,li,article,section,span');
+    for (var i = 0; i < all.length; i++){
+      all[i].setAttribute('data-aigate-seen', '1');
+      all[i].setAttribute('data-aigate-len', String(txt(all[i]).length));
+    }
+    return String(all.length);
+  };
+  window.__aigateNew = function(skip){
+    var list = blocks();
+    var found = null;
+    for (var i = 0; i < list.length; i++){
+      var b = list[i];
+      if (b.getAttribute('data-aigate-seen') === '1'){ continue; }
+      var t = txt(b);
+      if (skip && skip.length > 2 && t.indexOf(skip) >= 0 && t.length < skip.length + 30){ continue; }
+      found = b;
+    }
+    return found ? nodeText(found) : '';
+  };
+  window.__aigateGrown = function(skip){
+    var all = document.querySelectorAll('div,p,li,article,section');
+    var best = null;
+    var bestLen = 0;
+    for (var i = 0; i < all.length; i++){
+      var e = all[i];
+      if (e.querySelector('textarea') || e.querySelector('input')){ continue; }
+      var t = txt(e).trim();
+      if (t.length < 2 || t.length > 20000){ continue; }
+      if (skip && skip.length > 2 && t.indexOf(skip) >= 0){ continue; }
+      if (e.getAttribute('data-aigate-seen') === '1'){
+        var prev = parseInt(e.getAttribute('data-aigate-len') || '0', 10);
+        if (t.length <= prev + 2){ continue; }
+      }
+      if (t.length > bestLen){ bestLen = t.length; best = e; }
+    }
+    return best ? nodeText(best) : '';
+  };
+  window.__aigateAnswer = function(skip){
+    var t = window.__aigateNew(skip);
+    if (t && t.trim().length > 0){ return t; }
+    return window.__aigateGrown(skip);
+  };
+  window.__aigateBusy = function(){
+    var all = document.querySelectorAll('div[role="button"], button, [aria-label], [class*="loading"]');
+    for (var i = 0; i < all.length; i++){
+      var label = ((all[i].getAttribute('aria-label') || '') + ' ' + (all[i].className || '')).toLowerCase();
+      if (label.indexOf('stop') >= 0 || label.indexOf('loading') >= 0){ return '1'; }
+    }
+    return '0';
+  };
+  window.__aigateValue = function(){
+    var el = inputEl();
+    if (!el){ return ''; }
+    return (el.tagName === 'TEXTAREA' ? (el.value || '') : txt(el));
+  };
+  window.__aigateType = function(text){
+    var el = inputEl();
+    if (!el){ return 'no-input'; }
+    el.focus();
+    el.click();
+    if (el.tagName === 'TEXTAREA'){
+      var desc = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
+      if (desc && desc.set){ desc.set.call(el, text); } else { el.value = text; }
+    } else {
+      el.textContent = text;
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'ok';
+  };
+  window.__aigateEnter = function(){
+    var el = inputEl();
+    if (!el){ return 'no-input'; }
+    el.focus();
+    var opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+    el.dispatchEvent(new KeyboardEvent('keydown', opts));
+    el.dispatchEvent(new KeyboardEvent('keypress', opts));
+    el.dispatchEvent(new KeyboardEvent('keyup', opts));
+    return 'ok';
+  };
+  function sendScope(){
+    var el = inputEl();
+    var scope = document;
+    if (el){
+      var p = el.parentElement;
+      for (var d = 0; d < 5 && p; d++){ p = p.parentElement; }
+      if (p){ scope = p; }
+    }
+    return scope;
+  }
+  window.__aigateFindSend = function(){
+    return String(sendScope().querySelectorAll('div[role="button"], button, [aria-disabled]').length);
+  };
+  window.__aigateClickSend = function(){
+    var cands = sendScope().querySelectorAll('div[role="button"], button, [aria-disabled]');
+    var labelled = null;
+    for (var i = 0; i < cands.length; i++){
+      var label = ((cands[i].getAttribute('aria-label') || '') + ' ' + (cands[i].className || '')).toLowerCase();
+      if (label.indexOf('send') >= 0 || label.indexOf('submit') >= 0){ labelled = cands[i]; }
+    }
+    if (labelled){ labelled.click(); return 'clicked-label'; }
+    var last = null;
+    for (var j = 0; j < cands.length; j++){
+      var c = cands[j];
+      if (c.getAttribute('aria-disabled') === 'true'){ continue; }
+      if (c.querySelector('svg') || c.getAttribute('role') === 'button'){ last = c; }
+    }
+    if (last){ last.click(); return 'clicked-last'; }
+    return 'no-button';
+  };
+  window.__aigateDeepThink = function(on){
+    var all = document.querySelectorAll('div[role="button"], button, span');
+    for (var i = 0; i < all.length; i++){
+      var t = txt(all[i]).toLowerCase();
+      if (t.indexOf('deepthink') >= 0 || t.indexOf('deep think') >= 0){
+        var active = (all[i].className || '').toLowerCase().indexOf('active') >= 0
+          || all[i].getAttribute('aria-pressed') === 'true';
+        if ((on === '1' && !active) || (on === '0' && active)){ all[i].click(); }
+        return 'toggled';
+      }
+    }
+    return 'not-found';
+  };
+  window.__aigateTail = function(){
+    return txt(document.body).slice(-200).replace(/\s+/g, ' ');
+  };
+  window.__aigateDiag = function(){
+    var N = window.__aigateNet || {};
+    var el = inputEl();
+    return 'url=' + location.href
+      + ' | input=' + (el ? el.tagName : 'none')
+      + ' | blocks=' + blocks().length
+      + ' | hooked=' + (N.hooked ? '1' : '0')
+      + ' | early=' + (N.early || 0)
+      + ' | calls=' + (N.calls || 0)
+      + ' | frames=' + (N.frames || 0)
+      + ' | status=' + (N.status || 0)
+      + ' | netLen=' + ((N.text || '').length)
+      + ' | bodyLen=' + txt(document.body).length
+      + ' | seenUrls=' + ((N.allUrls || []).slice(-6).join(' '))
+      + ' | tail=' + window.__aigateTail();
+  };
+
+  window.__aigateChecks = function(){
+    var N = window.__aigateNet || {};
+    var out = [];
+    function add(key, ok, detail){
+      out.push(key + '|' + (ok ? '1' : '0') + '|' + String(detail).replace(/[|\n]/g, ' '));
+    }
+    var bodyLen = txt(document.body).length;
+    add('page', document.readyState !== 'loading' && bodyLen > 50,
+      'readyState=' + document.readyState + ' bodyTextLen=' + bodyLen);
+    var href = location.href;
+    add('route', href.indexOf('sign_in') < 0 && href.indexOf('login') < 0, 'url=' + href);
+    var token = '';
+    try {
+      for (var i = 0; i < localStorage.length; i++){
+        var k = localStorage.key(i);
+        if (k && k.toLowerCase().indexOf('token') >= 0){ token += k + ' '; }
+      }
+    } catch (e){ token = 'err'; }
+    add('session', (token && token !== 'err') || document.cookie.length > 20,
+      'lsTokens=' + (token || 'none') + ' cookieLen=' + document.cookie.length);
+    var el = inputEl();
+    add('input', !!el, el ? (el.tagName + ' id=' + (el.id || '-')) : 'not found');
+    add('sendbtn', parseInt(window.__aigateFindSend(), 10) > 0, 'candidates=' + window.__aigateFindSend());
+    add('hook', !!N.hooked, 'hooked=' + (N.hooked ? '1' : '0') + ' early=' + (N.early || 0));
+    add('early', (N.early || 0) === 1 && !!N.hooked,
+      'hook ghabl az script haye site: ' + ((N.early || 0) === 1 ? 'yes' : 'no'));
+    add('blocks', blocks().length > 0, 'answerBlocks=' + blocks().length);
+    add('calls', (N.calls || 0) > 0,
+      'chatRequests=' + (N.calls || 0) + ' urls=' + ((N.urls || []).join(' ')));
+    add('stream', (N.frames || 0) > 0,
+      'frames=' + (N.frames || 0) + ' status=' + (N.status || 0) + ' netLen=' + ((N.text || '').length) + ' err=' + (N.err || '-'));
+    add('seen', (N.allUrls || []).length > 0,
+      'lastUrls=' + ((N.allUrls || []).slice(-8).join(' ')));
+    return out.join('\n');
+  };
+  return 'dom-helpers';
+})();
+"""
+
+	private val BOOTSTRAP = NET_HOOK + "\n" + DOM_HELPERS
+
+	// ---------------------------------------------------------------- setup
 
 	@SuppressLint("SetJavaScriptEnabled")
 	fun configure(view: WebView) {
@@ -64,7 +504,23 @@ object WebSessionClient {
 		settings.cacheMode = WebSettings.LOAD_DEFAULT
 		settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 		view.webChromeClient = WebChromeClient()
-		view.webViewClient = WebViewClient()
+		view.webViewClient = object : WebViewClient() {
+			override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
+				super.onPageStarted(v, url, favicon)
+				v?.evaluateJavascript(NET_HOOK, null)
+			}
+
+			override fun doUpdateVisitedHistory(v: WebView?, url: String?, isReload: Boolean) {
+				super.doUpdateVisitedHistory(v, url, isReload)
+				v?.evaluateJavascript(NET_HOOK, null)
+			}
+
+			override fun onPageFinished(v: WebView?, url: String?) {
+				super.onPageFinished(v, url)
+				v?.evaluateJavascript(BOOTSTRAP, null)
+				CookieManager.getInstance().flush()
+			}
+		}
 		val cookies = CookieManager.getInstance()
 		cookies.setAcceptCookie(true)
 		cookies.setAcceptThirdPartyCookies(view, true)
@@ -152,10 +608,10 @@ object WebSessionClient {
 				'\\' -> { out.append('\\'); i += 2 }
 				'/' -> { out.append('/'); i += 2 }
 				'u' -> {
-					if (i + 6 <= body.length - 0 && i + 6 <= body.length) {
-						val hex = body.substring(i + 2, minOf(i + 6, body.length))
+					if (i + 6 <= body.length) {
+						val hex = body.substring(i + 2, i + 6)
 						val code = hex.toIntOrNull(16)
-						if (code != null && hex.length == 4) {
+						if (code != null) {
 							out.append(code.toChar())
 							i += 6
 						} else {
@@ -181,360 +637,16 @@ object WebSessionClient {
 		return "\"" + escaped + "\""
 	}
 
-	private val BOOTSTRAP = """
-(function(){
-  if (!window.__aigateNet){
-    window.__aigateNet = {
-      hooked: false, calls: 0, urls: [], status: 0, frames: 0,
-      text: '', think: '', done: false, err: '', lastPath: '', started: 0
-    };
-  }
-  var N = window.__aigateNet;
-
-  function inputEl(){
-    return document.querySelector('textarea#chat-input')
-      || document.querySelector('textarea')
-      || document.querySelector('[contenteditable="true"]');
-  }
-  function blocks(){
-    var list = document.querySelectorAll('div.ds-markdown');
-    if (list.length > 0){ return list; }
-    list = document.querySelectorAll('div[class*="markdown"]');
-    if (list.length > 0){ return list; }
-    return document.querySelectorAll('[class*="message"] > div, [class*="Message"] > div');
-  }
-  function nodeText(root){
-    var out = '';
-    var kids = root.childNodes;
-    for (var i = 0; i < kids.length; i++){
-      var k = kids[i];
-      if (k.nodeType === 3){ out += k.nodeValue; continue; }
-      if (k.nodeType !== 1){ continue; }
-      var tag = k.tagName.toLowerCase();
-      if (tag === 'pre'){
-        var codeEl = k.querySelector('code');
-        var lang = '';
-        if (codeEl && codeEl.className){
-          var m = codeEl.className.match(/language-([a-zA-Z0-9+#_-]+)/);
-          if (m){ lang = m[1]; }
-        }
-        var body = codeEl ? codeEl.innerText : k.innerText;
-        out += '\n' + '```' + lang + '\n' + body + '\n' + '```' + '\n';
-      } else if (tag === 'br'){
-        out += '\n';
-      } else if (tag === 'button' || tag === 'svg'){
-        out += '';
-      } else {
-        out += nodeText(k);
-        if (tag === 'p' || tag === 'div' || tag === 'li' || tag === 'h1' || tag === 'h2' || tag === 'h3' || tag === 'h4' || tag === 'tr'){
-          out += '\n';
-        }
-      }
-    }
-    return out;
-  }
-
-  // ---------- shenoode shabake ----------
-  window.__aigateFrame = function(line){
-    if (!line){ return; }
-    var s = ('' + line).trim();
-    if (s.indexOf('data:') === 0){ s = s.slice(5).trim(); }
-    if (!s || s === '[DONE]'){ if (s === '[DONE]'){ N.done = true; } return; }
-    var j = null;
-    try { j = JSON.parse(s); } catch (e){ return; }
-    N.frames++;
-    // sakhtare web e deepseek: {"v": "...", "p": "response/content", "o": "APPEND"}
-    if (typeof j.p === 'string' && j.p){ N.lastPath = j.p; }
-    if (typeof j.v === 'string'){
-      var path = (typeof j.p === 'string' && j.p) ? j.p : N.lastPath;
-      if (path && path.indexOf('thinking') >= 0){ N.think += j.v; }
-      else if (!path || path.indexOf('content') >= 0 || path.indexOf('response') >= 0){ N.text += j.v; }
-      return;
-    }
-    // sakhtare OpenAI
-    if (j.choices && j.choices[0]){
-      var d = j.choices[0].delta || j.choices[0].message;
-      if (d){
-        if (typeof d.content === 'string'){ N.text += d.content; }
-        if (typeof d.reasoning_content === 'string'){ N.think += d.reasoning_content; }
-      }
-      if (j.choices[0].finish_reason){ N.done = true; }
-    }
-    if (j.error){ N.err = JSON.stringify(j.error).slice(0, 300); }
-  };
-
-  window.__aigateHook = function(){
-    if (N.hooked){ return 'already'; }
-    if (!window.fetch){ return 'no-fetch'; }
-    var origFetch = window.fetch;
-    window.fetch = function(input, init){
-      var url = '';
-      try { url = (typeof input === 'string') ? input : ((input && input.url) || ''); } catch (e){ url = ''; }
-      var isChat = url.indexOf('completion') >= 0 || url.indexOf('/chat/') >= 0;
-      var promise = origFetch.apply(this, arguments);
-      if (!isChat){ return promise; }
-      return promise.then(function(res){
-        try {
-          if (url.indexOf('completion') < 0){ return res; }
-          N.calls++;
-          N.urls.push(url.slice(0, 120));
-          N.status = res.status;
-          N.text = ''; N.think = ''; N.frames = 0; N.done = false; N.err = ''; N.lastPath = '';
-          N.started = Date.now();
-          if (!res.body || !res.body.getReader){ N.done = true; return res; }
-          var clone = res.clone();
-          var reader = clone.body.getReader();
-          var dec = new TextDecoder();
-          var buf = '';
-          var pump = function(){
-            return reader.read().then(function(r){
-              if (r.done){ if (buf){ window.__aigateFrame(buf); } N.done = true; return; }
-              buf += dec.decode(r.value, { stream: true });
-              var idx;
-              while ((idx = buf.indexOf('\n')) >= 0){
-                var line = buf.slice(0, idx);
-                buf = buf.slice(idx + 1);
-                window.__aigateFrame(line);
-              }
-              return pump();
-            });
-          };
-          pump().catch(function(e){ N.err = 'read:' + e; N.done = true; });
-        } catch (e){ N.err = 'hook:' + e; }
-        return res;
-      }).catch(function(e){
-        N.err = 'fetch:' + e;
-        N.done = true;
-        throw e;
-      });
-    };
-    N.hooked = true;
-    return 'hooked';
-  };
-
-  window.__aigateReset = function(){
-    N.text = ''; N.think = ''; N.frames = 0; N.done = false;
-    N.err = ''; N.status = 0; N.calls = 0; N.urls = []; N.lastPath = '';
-    return 'reset';
-  };
-
-  window.__aigateState = function(){
-    return 'status=' + N.status
-      + '\nhooked=' + (N.hooked ? '1' : '0')
-      + '\ndone=' + (N.done ? '1' : '0')
-      + '\nframes=' + N.frames
-      + '\ncalls=' + N.calls
-      + '\nerr=' + (N.err || '')
-      + '\nthinkLen=' + N.think.length
-      + '\n---TEXT---\n' + N.text;
-  };
-
-  // ---------- DOM (faghat fallback) ----------
-  window.__aigateReady = function(){ return inputEl() ? '1' : '0'; };
-  window.__aigateMark = function(){
-    var list = blocks();
-    for (var i = 0; i < list.length; i++){ list[i].setAttribute('data-aigate-seen', '1'); }
-    return String(list.length);
-  };
-  window.__aigateMarkAll = function(){
-    var all = document.querySelectorAll('div,p,li,article,section,span');
-    for (var i = 0; i < all.length; i++){
-      all[i].setAttribute('data-aigate-seen', '1');
-      all[i].setAttribute('data-aigate-len', String((all[i].innerText || '').length));
-    }
-    return String(all.length);
-  };
-  window.__aigateNew = function(skip){
-    var list = blocks();
-    var found = null;
-    for (var i = 0; i < list.length; i++){
-      var b = list[i];
-      if (b.getAttribute('data-aigate-seen') === '1'){ continue; }
-      var t = nodeText(b);
-      if (skip && skip.length > 2 && t.indexOf(skip) >= 0 && t.length < skip.length + 30){ continue; }
-      found = b;
-    }
-    return found ? nodeText(found) : '';
-  };
-  window.__aigateGrown = function(skip){
-    var all = document.querySelectorAll('div,p,li,article,section');
-    var best = null;
-    var bestLen = 0;
-    for (var i = 0; i < all.length; i++){
-      var e = all[i];
-      if (e.querySelector('textarea') || e.querySelector('input')){ continue; }
-      var t = (e.innerText || '').trim();
-      if (t.length < 2 || t.length > 20000){ continue; }
-      if (skip && skip.length > 2 && t.indexOf(skip) >= 0){ continue; }
-      if (e.getAttribute('data-aigate-seen') === '1'){
-        var prev = parseInt(e.getAttribute('data-aigate-len') || '0', 10);
-        if (t.length <= prev + 2){ continue; }
-      }
-      if (t.length > bestLen){ bestLen = t.length; best = e; }
-    }
-    return best ? nodeText(best) : '';
-  };
-  window.__aigateAnswer = function(skip){
-    var t = window.__aigateNew(skip);
-    if (t && t.trim().length > 0){ return t; }
-    return window.__aigateGrown(skip);
-  };
-  window.__aigateBusy = function(){
-    var all = document.querySelectorAll('div[role="button"], button, [aria-label], [class*="loading"]');
-    for (var i = 0; i < all.length; i++){
-      var label = ((all[i].getAttribute('aria-label') || '') + ' ' + (all[i].className || '')).toLowerCase();
-      if (label.indexOf('stop') >= 0 || label.indexOf('loading') >= 0){ return '1'; }
-    }
-    return '0';
-  };
-  window.__aigateValue = function(){
-    var el = inputEl();
-    if (!el){ return ''; }
-    return (el.tagName === 'TEXTAREA' ? (el.value || '') : (el.innerText || ''));
-  };
-  window.__aigateType = function(text){
-    var el = inputEl();
-    if (!el){ return 'no-input'; }
-    el.focus();
-    el.click();
-    if (el.tagName === 'TEXTAREA'){
-      var desc = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
-      if (desc && desc.set){ desc.set.call(el, text); } else { el.value = text; }
-    } else {
-      el.innerText = text;
-    }
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
-    return 'ok';
-  };
-  window.__aigateEnter = function(){
-    var el = inputEl();
-    if (!el){ return 'no-input'; }
-    el.focus();
-    var opts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
-    el.dispatchEvent(new KeyboardEvent('keydown', opts));
-    el.dispatchEvent(new KeyboardEvent('keypress', opts));
-    el.dispatchEvent(new KeyboardEvent('keyup', opts));
-    return 'ok';
-  };
-  window.__aigateFindSend = function(){
-    var el = inputEl();
-    var scope = document;
-    if (el){
-      var p = el.parentElement;
-      for (var d = 0; d < 5 && p; d++){ p = p.parentElement; }
-      if (p){ scope = p; }
-    }
-    var cands = scope.querySelectorAll('div[role="button"], button, [aria-disabled]');
-    return String(cands.length);
-  };
-  window.__aigateClickSend = function(){
-    var el = inputEl();
-    var scope = document;
-    if (el){
-      var p = el.parentElement;
-      for (var d = 0; d < 5 && p; d++){ p = p.parentElement; }
-      if (p){ scope = p; }
-    }
-    var cands = scope.querySelectorAll('div[role="button"], button, [aria-disabled]');
-    var labelled = null;
-    for (var i = 0; i < cands.length; i++){
-      var label = ((cands[i].getAttribute('aria-label') || '') + ' ' + (cands[i].className || '')).toLowerCase();
-      if (label.indexOf('send') >= 0 || label.indexOf('submit') >= 0){ labelled = cands[i]; }
-    }
-    if (labelled){ labelled.click(); return 'clicked-label'; }
-    var last = null;
-    for (var j = 0; j < cands.length; j++){
-      var c = cands[j];
-      if (c.getAttribute('aria-disabled') === 'true'){ continue; }
-      if (c.querySelector('svg') || c.getAttribute('role') === 'button'){ last = c; }
-    }
-    if (last){ last.click(); return 'clicked-last'; }
-    return 'no-button';
-  };
-  window.__aigateDeepThink = function(on){
-    var all = document.querySelectorAll('div[role="button"], button, span');
-    for (var i = 0; i < all.length; i++){
-      var text = (all[i].innerText || '').toLowerCase();
-      if (text.indexOf('deepthink') >= 0 || text.indexOf('deep think') >= 0){
-        var active = (all[i].className || '').toLowerCase().indexOf('active') >= 0
-          || all[i].getAttribute('aria-pressed') === 'true';
-        if ((on === '1' && !active) || (on === '0' && active)){ all[i].click(); }
-        return 'toggled';
-      }
-    }
-    return 'not-found';
-  };
-  window.__aigateTail = function(){
-    var t = (document.body ? (document.body.innerText || '') : '');
-    return t.slice(-160).replace(/\s+/g, ' ');
-  };
-  window.__aigateDiag = function(){
-    var el = inputEl();
-    return 'url=' + location.href
-      + ' | input=' + (el ? el.tagName : 'none')
-      + ' | blocks=' + blocks().length
-      + ' | hooked=' + (N.hooked ? '1' : '0')
-      + ' | calls=' + N.calls
-      + ' | frames=' + N.frames
-      + ' | status=' + N.status
-      + ' | netLen=' + N.text.length
-      + ' | bodyLen=' + ((document.body && document.body.innerText) || '').length
-      + ' | tail=' + window.__aigateTail();
-  };
-
-  // ---------- checkup ----------
-  window.__aigateChecks = function(){
-    var out = [];
-    function add(key, ok, detail){
-      out.push(key + '|' + (ok ? '1' : '0') + '|' + String(detail).replace(/[|\n]/g, ' '));
-    }
-    var bodyLen = ((document.body && document.body.innerText) || '').length;
-    add('page', document.readyState !== 'loading' && bodyLen > 50,
-      'readyState=' + document.readyState + ' bodyLen=' + bodyLen);
-    var href = location.href;
-    add('route', href.indexOf('sign_in') < 0 && href.indexOf('login') < 0, 'url=' + href);
-    var token = '';
-    try {
-      for (var i = 0; i < localStorage.length; i++){
-        var k = localStorage.key(i);
-        if (k && k.toLowerCase().indexOf('token') >= 0){ token += k + ' '; }
-      }
-    } catch (e){ token = 'err'; }
-    add('session', (token && token !== 'err') || document.cookie.length > 20,
-      'lsTokens=' + (token || 'none') + ' cookieLen=' + document.cookie.length);
-    var el = inputEl();
-    add('input', !!el, el ? (el.tagName + ' id=' + (el.id || '-')) : 'not found');
-    add('sendbtn', parseInt(window.__aigateFindSend(), 10) > 0, 'candidates=' + window.__aigateFindSend());
-    add('hook', N.hooked, 'hooked=' + (N.hooked ? '1' : '0'));
-    var wasm = 0;
-    try {
-      var res = performance.getEntriesByType('resource');
-      for (var r = 0; r < res.length; r++){
-        if ((res[r].name || '').indexOf('.wasm') >= 0){ wasm++; }
-      }
-    } catch (e){ wasm = -1; }
-    add('wasm', typeof WebAssembly !== 'undefined', 'WebAssembly=' + (typeof WebAssembly) + ' wasmFiles=' + wasm);
-    add('blocks', blocks().length > 0, 'answerBlocks=' + blocks().length);
-    add('calls', N.calls > 0, 'chatRequests=' + N.calls + ' urls=' + N.urls.join(' '));
-    add('stream', N.frames > 0, 'frames=' + N.frames + ' status=' + N.status + ' netLen=' + N.text.length + ' err=' + (N.err || '-'));
-    return out.join('\n');
-  };
-
-  window.__aigateHook();
-  return 'installed';
-})();
-"""
-
 	private suspend fun install(view: WebView) {
 		eval(view, BOOTSTRAP)
 	}
 
 	private suspend fun ensureAlive(view: WebView) {
-		val alive = eval(view, "(typeof window.__aigateState === 'function' && window.__aigateNet && window.__aigateNet.hooked) ? '1' : '0'")
-		if (alive != "1") {
-			install(view)
-		}
+		val alive = eval(
+			view,
+			"(typeof window.__aigateState === 'function' && window.__aigateNet && window.__aigateNet.hooked) ? '1' : '0'",
+		)
+		if (alive != "1") install(view)
 	}
 
 	private suspend fun waitReady(view: WebView, timeoutMs: Int): Boolean {
@@ -546,6 +658,19 @@ object WebSessionClient {
 			waited += 600
 		}
 		return false
+	}
+
+	/**
+	 * agar hook bad az ejraye script haye site nasb shode bashad, site reference e
+	 * ghadimi fetch ra dar dast darad va shenood kar nemikonad. dar in halat yek bar
+	 * safhe ra reload mikonim ta hook dar onPageStarted nasb shavad.
+	 */
+	private suspend fun ensureEarlyHook(view: WebView): Boolean {
+		val early = eval(view, "(window.__aigateNet && window.__aigateNet.early === 1) ? '1' : '0'")
+		if (early == "1") return true
+		withContext(Dispatchers.Main) { view.reload() }
+		delay(1200)
+		return waitReady(view, 30000)
 	}
 
 	private suspend fun readState(view: WebView): StreamState {
@@ -567,7 +692,6 @@ object WebSessionClient {
 			calls = field("calls").trim().toIntOrNull() ?: 0,
 			error = field("err").trim(),
 			text = text,
-			think = "",
 		)
 	}
 
@@ -621,6 +745,8 @@ object WebSessionClient {
 			)
 			return@flow
 		}
+
+		ensureEarlyHook(view)
 
 		val wantsDeepThink = model.contains("R1", ignoreCase = true) ||
 			model.contains("reason", ignoreCase = true) ||
@@ -682,8 +808,7 @@ object WebSessionClient {
 			}
 
 			var text = state.text
-			if (text.isBlank() && elapsed >= 6000) {
-				// fallback: khandan az DOM
+			if (text.isBlank() && elapsed >= 2000) {
 				text = eval(view, "window.__aigateAnswer(" + skipArg + ")")
 			}
 			text = text.trim()
@@ -748,20 +873,21 @@ object WebSessionClient {
 	}
 
 	private fun titleFor(key: String): String = when (key) {
-		"page" -> "۱. بارگذاری صفحه در وب‌ویو"
+		"page" -> "۱. محتوای صفحه در وب‌ویو"
 		"route" -> "۲. آدرس صفحه (ریدایرکت لاگین)"
 		"session" -> "۳. توکن نشست و کوکی"
 		"input" -> "۴. کادر نوشتن پیام"
 		"sendbtn" -> "۵. دکمه‌ی ارسال"
-		"hook" -> "۶. شنود شبکه (fetch)"
-		"wasm" -> "۷. WebAssembly و PoW سایت"
+		"hook" -> "۶. شنود شبکه (fetch/XHR/SSE)"
+		"early" -> "۷. نصب شنود قبل از اسکریپت‌های سایت"
 		"blocks" -> "۸. بلوک‌های پاسخ در صفحه"
 		"calls" -> "۹. درخواست‌های چت ثبت‌شده"
 		"stream" -> "۱۰. فریم‌های استریم پاسخ"
+		"seen" -> "۱۱. آدرس‌های شبکه‌ی دیده‌شده"
 		else -> key
 	}
 
-	/** system e checkup: dah marhale ra test mikonad va gozaresh midahad. */
+	/** system e checkup: marahel e mokhtalef ra test mikonad va gozaresh midahad. */
 	suspend fun runDiagnostics(
 		context: Context,
 		provider: Provider,
@@ -780,48 +906,48 @@ object WebSessionClient {
 			WebCheck(
 				"۰. وب‌ویو زنده و متصل",
 				host != null,
-				if (host != null) "وب‌ویوی متصل به صفحه فعال است" else "فقط وب‌ویوی پشتیبان — یک API از نوع نشست وب بساز",
+				if (host != null) "وب‌ویوی متصل به صفحه فعال است" else "فقط وب‌ویوی پشتیبان",
 			)
 		)
 
 		val ready = waitReady(view, 25000)
+		if (ready) ensureEarlyHook(view)
+
 		if (liveTest && ready) {
-			// yek payam koochak ersal kon ta zanjire kamel test shavad
 			val probe = listOf(ChatMessage(role = "user", content = "سلام، فقط بنویس: تست"))
 			val outcome = try {
 				complete(context, provider, provider.defaultModel, probe)
 			} catch (t: Throwable) {
 				Result.failure<String>(t)
 			}
-			val raw = eval(view, "window.__aigateChecks()")
-			for (line in raw.lines()) {
-				val parts = line.split("|")
-				if (parts.size < 3) continue
-				results.add(WebCheck(titleFor(parts[0]), parts[1] == "1", parts[2]))
-			}
+			appendJsChecks(view, results)
 			results.add(
 				WebCheck(
-					"۱۱. تست کامل ارسال و دریافت",
+					"۱۲. تست کامل ارسال و دریافت",
 					outcome.isSuccess,
 					outcome.fold(
-						onSuccess = { "پاسخ گرفته شد: " + it.take(120) },
+						onSuccess = { "پاسخ گرفته شد: " + it.take(140) },
 						onFailure = { it.message ?: "خطا" },
 					),
 				)
 			)
 		} else {
-			val raw = eval(view, "window.__aigateChecks()")
-			for (line in raw.lines()) {
-				val parts = line.split("|")
-				if (parts.size < 3) continue
-				results.add(WebCheck(titleFor(parts[0]), parts[1] == "1", parts[2]))
-			}
+			appendJsChecks(view, results)
 			if (!ready) {
-				results.add(WebCheck("۱۱. تست کامل ارسال و دریافت", false, "چون کادر چت آماده نشد اجرا نشد"))
+				results.add(WebCheck("۱۲. تست کامل ارسال و دریافت", false, "چون کادر چت آماده نشد اجرا نشد"))
 			}
 		}
 		persistCookies()
 		return results
+	}
+
+	private suspend fun appendJsChecks(view: WebView, results: ArrayList<WebCheck>) {
+		val raw = eval(view, "window.__aigateChecks()")
+		for (line in raw.lines()) {
+			val parts = line.split("|")
+			if (parts.size < 3) continue
+			results.add(WebCheck(titleFor(parts[0]), parts[1] == "1", parts[2]))
+		}
 	}
 
 	fun release() {

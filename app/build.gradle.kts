@@ -13,8 +13,8 @@ android {
 		applicationId = "com.aigate.chat"
 		minSdk = 24
 		targetSdk = 35
-		versionCode = 11
-		versionName = "8.0"
+		versionCode = 12
+		versionName = "8.1"
 		vectorDrawables { useSupportLibrary = true }
 	}
 

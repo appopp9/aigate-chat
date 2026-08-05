@@ -75,6 +75,11 @@ class MainActivity : FragmentActivity() {
 						val shortDur = if (flat) 110 else 220
 						val webProvider = state.providers.firstOrNull { it.type == ProviderType.WEB }
 						Box(modifier = Modifier.fillMaxSize()) {
+						if (webProvider != null) {
+							WebSessionHost(
+								url = webProvider.baseUrl.ifBlank { WebSessionClient.DEFAULT_SITE },
+							)
+						}
 						NavHost(
 							navController = navController,
 							startDestination = "chat",
@@ -134,11 +139,6 @@ class MainActivity : FragmentActivity() {
 							composable("search") {
 								SearchScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
 							}
-						}
-						if (webProvider != null) {
-							WebSessionHost(
-								url = webProvider.baseUrl.ifBlank { WebSessionClient.DEFAULT_SITE },
-							)
 						}
 						}
 					}
