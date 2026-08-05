@@ -192,7 +192,9 @@ object WebSessionClient {
       + ' | blocks=' + blocks().length
       + ' | seen=' + seen
       + ' | think=' + thinkBlocks().length
-      + ' | buttons=' + document.querySelectorAll('div[role="button"], button').length;
+      + ' | buttons=' + document.querySelectorAll('div[role="button"], button').length
+      + ' | bodyLen=' + (document.body ? (document.body.innerText || '').length : 0)
+      + ' | tail=' + (window.__aigateTail ? window.__aigateTail() : '');
   };
   // hameye block haye feli ra alamat mizanad ta bad az ersal betavanim block e jadid ra tashkhis dahim
   window.__aigateMark = function(){
@@ -223,6 +225,45 @@ object WebSessionClient {
       if (list[i].getAttribute('data-aigate-seen') !== '1'){ n++; }
     }
     return String(n);
+  };
+  // hameye element haye feli ra alamat mizanad va toole matneshan ra zakhire mikonad
+  window.__aigateMarkAll = function(){
+    var all = document.querySelectorAll('div,p,li,article,section,span');
+    for (var i = 0; i < all.length; i++){
+      all[i].setAttribute('data-aigate-seen', '1');
+      var t = all[i].innerText || '';
+      all[i].setAttribute('data-aigate-len', String(t.length));
+    }
+    return String(all.length);
+  };
+  // raveshe omoomi: har element e jadid ya bozorg-shode ke matn e karbar tooyash nist
+  window.__aigateGrown = function(skip){
+    var all = document.querySelectorAll('div,p,li,article,section');
+    var best = null;
+    var bestLen = 0;
+    for (var i = 0; i < all.length; i++){
+      var e = all[i];
+      if (e.querySelector('textarea') || e.querySelector('input')){ continue; }
+      var t = (e.innerText || '').trim();
+      if (t.length < 2 || t.length > 20000){ continue; }
+      if (skip && skip.length > 2 && t.indexOf(skip) >= 0){ continue; }
+      if (e.getAttribute('data-aigate-seen') === '1'){
+        var prev = parseInt(e.getAttribute('data-aigate-len') || '0', 10);
+        if (t.length <= prev + 2){ continue; }
+      }
+      if (t.length > bestLen){ bestLen = t.length; best = e; }
+    }
+    if (!best){ return ''; }
+    return nodeText(best);
+  };
+  window.__aigateAnswer = function(skip){
+    var t = window.__aigateNew(skip);
+    if (t && t.trim().length > 0){ return t; }
+    return window.__aigateGrown(skip);
+  };
+  window.__aigateTail = function(){
+    var t = (document.body ? (document.body.innerText || '') : '');
+    return t.slice(-160).replace(/\s+/g, ' ');
   };
   window.__aigateBusy = function(){
     var all = document.querySelectorAll('div[role="button"], button, [aria-label], [class*="loading"], [class*="Loading"]');
@@ -377,8 +418,9 @@ object WebSessionClient {
 			delay(300)
 		}
 
-		// alamat zadane hameye javab haye ghabli
+		// alamat zadane hameye javab ha va element haye ghabli
 		eval(view, "window.__aigateMark()")
+		eval(view, "window.__aigateMarkAll()")
 
 		// 1) neveshtan
 		val typed = eval(view, "window.__aigateType(" + jsString(prompt) + ")")
@@ -432,9 +474,9 @@ object WebSessionClient {
 			val newCount = eval(view, "window.__aigateNewCount()").toIntOrNull() ?: 0
 			if (newCount > 0) sawAnyBlock = true
 
-			val text = eval(view, "window.__aigateNew(" + skipArg + ")").trim()
+			val text = eval(view, "window.__aigateAnswer(" + skipArg + ")").trim()
 			if (text.isEmpty()) {
-				if (!started && elapsed > 120000) {
+				if (!started && elapsed > 90000) {
 					lastLog = eval(view, "window.__aigateDiag()")
 					emit(
 						StreamEvent.Failure(
