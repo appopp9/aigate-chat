@@ -585,8 +585,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 			var usageCompletion = 0
 
 			val webMode = provider.type == ProviderType.WEB
+			val webSession = _state.value.conversations
+				.firstOrNull { it.id == conversationId }?.webSessionUrl.orEmpty()
 			val streamFlow = if (webMode) {
-				WebSessionClient.streamChat(getApplication(), provider, usedModel, history)
+				WebSessionClient.streamChat(getApplication(), provider, usedModel, history, webSession)
 			} else {
 				client.streamChat(provider, usedModel, settings, systemPrompt, history)
 			}
@@ -622,6 +624,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 					},
 					onFailure = { error -> failure = error.message ?: "خطا" },
 				)
+			}
+
+			// zakhireye adrese goftogooye site baraye hamin chat
+			if (webMode) {
+				val siteSession = WebSessionClient.lastSessionUrl
+				if (siteSession.contains("/a/chat/s/")) {
+					updateConversation(conversationId) { it.copy(webSessionUrl = siteSession) }
+				}
 			}
 
 			// agar stream shekast khord, yek bar ba halate gheyre stream talash kon

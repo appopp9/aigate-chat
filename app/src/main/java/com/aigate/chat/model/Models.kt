@@ -129,6 +129,8 @@ data class Conversation(
 	val personaId: String = "",
 	/** kholaseye sanjagh shode dar bala */
 	val summary: String = "",
+	/** adrese neshaste site dar halate web ta chat ha ghati nashavand */
+	val webSessionUrl: String = "",
 ) {
 	val promptTokens: Int get() = messages.sumOf { it.promptTokens }
 	val completionTokens: Int get() = messages.sumOf { it.completionTokens }

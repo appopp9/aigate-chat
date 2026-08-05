@@ -40,6 +40,10 @@ object WebSessionClient {
 	private var fallbackView: WebView? = null
 	private var lastLog: String = ""
 
+	/** adrese goftogooye site baraye chat e feli (bad az ersal khande mishavad) */
+	var lastSessionUrl: String = ""
+		private set
+
 	fun log(): String = lastLog
 
 	data class WebCheck(val title: String, val ok: Boolean, val detail: String)
@@ -727,6 +731,7 @@ object WebSessionClient {
 		provider: Provider,
 		model: String,
 		history: List<ChatMessage>,
+		sessionUrl: String = "",
 	): Flow<StreamEvent> = flow {
 		val prompt = promptFor(history)
 		if (prompt.isEmpty()) {
@@ -735,6 +740,20 @@ object WebSessionClient {
 		}
 		val url = provider.baseUrl.ifBlank { DEFAULT_SITE }
 		val view = webView(context, url)
+		lastSessionUrl = ""
+
+		// har chat e app yek goftogooye jodaye site darad ta hafeze ghati nashavad
+		val currentHref = withContext(Dispatchers.Main) { view.url ?: "" }
+		val needsNav = if (sessionUrl.isNotBlank()) {
+			!currentHref.startsWith(sessionUrl)
+		} else {
+			currentHref.contains("/a/chat/s/")
+		}
+		if (needsNav) {
+			val target = if (sessionUrl.isNotBlank()) sessionUrl else url
+			withContext(Dispatchers.Main) { view.loadUrl(target) }
+			delay(1500)
+		}
 
 		if (!waitReady(view, 40000)) {
 			lastLog = eval(view, "window.__aigateDiag()")
@@ -842,6 +861,7 @@ object WebSessionClient {
 		}
 
 		persistCookies()
+		lastSessionUrl = eval(view, "location.href")
 		eval(view, "window.__aigateMark()")
 		if (!started) {
 			lastLog = eval(view, "window.__aigateDiag()")
@@ -856,10 +876,11 @@ object WebSessionClient {
 		provider: Provider,
 		model: String,
 		history: List<ChatMessage>,
+		sessionUrl: String = "",
 	): Result<String> {
 		var text = ""
 		var failure: String? = null
-		streamChat(context, provider, model, history).collect { event ->
+		streamChat(context, provider, model, history, sessionUrl).collect { event ->
 			when (event) {
 				is StreamEvent.Delta -> text += event.text
 				is StreamEvent.Replace -> text = event.text
