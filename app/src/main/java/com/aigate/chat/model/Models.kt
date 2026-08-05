@@ -186,6 +186,8 @@ data class AppSettings(
 	val budgetWarnPercent: Int = 80,
 	/** vaghti budje tamam shod, ersal motevaghef shavad */
 	val blockOverBudget: Boolean = false,
+	/** masiryab e hooshmand e model */
+	val smartRouter: Boolean = false,
 )
 
 @Serializable

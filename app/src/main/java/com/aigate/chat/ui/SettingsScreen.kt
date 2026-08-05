@@ -243,6 +243,22 @@ fun SettingsScreen(viewModel: ChatViewModel, onBack: () -> Unit) {
 			}
 
 			item {
+				SectionCard("مسیریاب هوشمند مدل") {
+					Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+						ToggleRow("انتخاب خودکار مدل", settings.smartRouter) {
+							haptics.tap()
+							viewModel.updateSettings(settings.copy(smartRouter = it))
+						}
+						Text(
+							"پیام ساده به مدل ارزان و پیام سنگین به مدل قوی می‌رود. مدلی که انتخاب می‌شود در پایین هر پاسخ نوشته می‌شود.",
+							style = MaterialTheme.typography.labelSmall,
+							color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+						)
+					}
+				}
+			}
+
+			item {
 				SectionCard("استایل ظاهری") {
 					Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
 						ToggleRow("استایل نئوبروتالیسم", settings.neoStyle) {

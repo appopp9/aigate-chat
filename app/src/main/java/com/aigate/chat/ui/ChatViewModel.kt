@@ -23,6 +23,7 @@ import com.aigate.chat.net.StreamEvent
 import com.aigate.chat.net.WebSessionClient
 import com.aigate.chat.service.GenerationService
 import com.aigate.chat.util.AttachmentUtils
+import com.aigate.chat.util.ModelRouter
 import com.aigate.chat.util.Exporter
 import com.aigate.chat.util.FileSaver
 import com.aigate.chat.util.TokenCounter
@@ -546,9 +547,29 @@ class ChatViewModel(app: Application) : AndroidViewModel(app) {
 			return
 		}
 
-		val assistant = ChatMessage(role = "assistant", content = "", modelName = conversation.model)
+		val routedModel = if (
+			s.settings.smartRouter &&
+			provider.type != ProviderType.WEB
+		) {
+			val picked = ModelRouter.pick(
+				provider,
+				conversation.model,
+				body,
+				userMessage.attachments.isNotEmpty(),
+			)
+			if (picked.isNotBlank() && picked != conversation.model) {
+				showToast("مسیریاب مدل: " + picked)
+				picked
+			} else {
+				conversation.model
+			}
+		} else {
+			conversation.model
+		}
+
+		val assistant = ChatMessage(role = "assistant", content = "", modelName = routedModel)
 		updateConversation(conversation.id) { it.copy(messages = it.messages + assistant) }
-		startGeneration(conversation.id, assistant.id, provider, conversation.model)
+		startGeneration(conversation.id, assistant.id, provider, routedModel)
 	}
 
 	private fun historyFor(conversationId: String, assistantMessageId: String): List<ChatMessage> {
