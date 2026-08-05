@@ -20,9 +20,10 @@ import kotlin.coroutines.resume
 /**
  * halate sevvom: goftogoo az tarighe neshaste morourgar (WebView).
  *
- * ravesh: ghabl az ersal, hameye block haye javab e mojood ba data-aigate-seen alamat mikhorand.
- * bad az ersal, aval block e bi-alamat peyda mishavad; in ravesh ba avaz shodane URL
- * (sakhte goftogooye jadid dar site) ham nemishkanad, chon shomaresh melak nist.
+ * ravesh e asli (v8): shabake ra shenood mikonim.
+ * fetch e safhe patch mishavad, va vaghti khode site darkhast e /completion ra mizanad,
+ * hamin stream (SSE) khande mishavad. digar be class ha va DOM e site vabaste nistim.
+ * khandan az DOM faghat fallback ast.
  */
 object WebSessionClient {
 
@@ -37,6 +38,18 @@ object WebSessionClient {
 	private var lastLog: String = ""
 
 	fun log(): String = lastLog
+
+	data class WebCheck(val title: String, val ok: Boolean, val detail: String)
+
+	private data class StreamState(
+		val status: Int,
+		val done: Boolean,
+		val frames: Int,
+		val calls: Int,
+		val error: String,
+		val text: String,
+		val think: String,
+	)
 
 	@SuppressLint("SetJavaScriptEnabled")
 	fun configure(view: WebView) {
@@ -110,21 +123,53 @@ object WebSessionClient {
 			}
 		}
 
+	/** JSON string e barghashti az evaluateJavascript ra be matn e vaghei tabdil mikonad. */
 	private fun unquote(raw: String?): String {
-		if (raw == null || raw == "null") return ""
-		var value = raw
-		if (value.length >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
-			value = value.substring(1, value.length - 1)
+		if (raw == null || raw == "null" || raw == "undefined") return ""
+		var body = raw
+		if (body.length >= 2 && body.startsWith("\"") && body.endsWith("\"")) {
+			body = body.substring(1, body.length - 1)
 		}
-		return value
-			.replace("\\n", "\n")
-			.replace("\\t", "\t")
-			.replace("\\r", "")
-			.replace("\\\"", "\"")
-			.replace("\\\\", "\\")
-			.replace("\\u003C", "<")
-			.replace("\\u003E", ">")
-			.replace("\\u0026", "&")
+		val out = StringBuilder(body.length)
+		var i = 0
+		while (i < body.length) {
+			val c = body[i]
+			if (c != '\\') {
+				out.append(c)
+				i++
+				continue
+			}
+			if (i + 1 >= body.length) break
+			val next = body[i + 1]
+			when (next) {
+				'n' -> { out.append('\n'); i += 2 }
+				't' -> { out.append('\t'); i += 2 }
+				'r' -> { i += 2 }
+				'b' -> { i += 2 }
+				'f' -> { i += 2 }
+				'"' -> { out.append('"'); i += 2 }
+				'\'' -> { out.append('\''); i += 2 }
+				'\\' -> { out.append('\\'); i += 2 }
+				'/' -> { out.append('/'); i += 2 }
+				'u' -> {
+					if (i + 6 <= body.length - 0 && i + 6 <= body.length) {
+						val hex = body.substring(i + 2, minOf(i + 6, body.length))
+						val code = hex.toIntOrNull(16)
+						if (code != null && hex.length == 4) {
+							out.append(code.toChar())
+							i += 6
+						} else {
+							out.append(next)
+							i += 2
+						}
+					} else {
+						i += 2
+					}
+				}
+				else -> { out.append(next); i += 2 }
+			}
+		}
+		return out.toString()
 	}
 
 	private fun jsString(value: String): String {
@@ -138,6 +183,14 @@ object WebSessionClient {
 
 	private val BOOTSTRAP = """
 (function(){
+  if (!window.__aigateNet){
+    window.__aigateNet = {
+      hooked: false, calls: 0, urls: [], status: 0, frames: 0,
+      text: '', think: '', done: false, err: '', lastPath: '', started: 0
+    };
+  }
+  var N = window.__aigateNet;
+
   function inputEl(){
     return document.querySelector('textarea#chat-input')
       || document.querySelector('textarea')
@@ -149,9 +202,6 @@ object WebSessionClient {
     list = document.querySelectorAll('div[class*="markdown"]');
     if (list.length > 0){ return list; }
     return document.querySelectorAll('[class*="message"] > div, [class*="Message"] > div');
-  }
-  function thinkBlocks(){
-    return document.querySelectorAll('[class*="thinking"], [class*="Thinking"], [class*="reasoning"]');
   }
   function nodeText(root){
     var out = '';
@@ -183,28 +233,117 @@ object WebSessionClient {
     }
     return out;
   }
-  window.__aigateReady = function(){ return inputEl() ? '1' : '0'; };
-  window.__aigateDiag = function(){
-    var el = inputEl();
-    var seen = document.querySelectorAll('[data-aigate-seen="1"]').length;
-    return 'url=' + location.href
-      + ' | input=' + (el ? el.tagName : 'none')
-      + ' | blocks=' + blocks().length
-      + ' | seen=' + seen
-      + ' | think=' + thinkBlocks().length
-      + ' | buttons=' + document.querySelectorAll('div[role="button"], button').length
-      + ' | bodyLen=' + (document.body ? (document.body.innerText || '').length : 0)
-      + ' | tail=' + (window.__aigateTail ? window.__aigateTail() : '');
+
+  // ---------- shenoode shabake ----------
+  window.__aigateFrame = function(line){
+    if (!line){ return; }
+    var s = ('' + line).trim();
+    if (s.indexOf('data:') === 0){ s = s.slice(5).trim(); }
+    if (!s || s === '[DONE]'){ if (s === '[DONE]'){ N.done = true; } return; }
+    var j = null;
+    try { j = JSON.parse(s); } catch (e){ return; }
+    N.frames++;
+    // sakhtare web e deepseek: {"v": "...", "p": "response/content", "o": "APPEND"}
+    if (typeof j.p === 'string' && j.p){ N.lastPath = j.p; }
+    if (typeof j.v === 'string'){
+      var path = (typeof j.p === 'string' && j.p) ? j.p : N.lastPath;
+      if (path && path.indexOf('thinking') >= 0){ N.think += j.v; }
+      else if (!path || path.indexOf('content') >= 0 || path.indexOf('response') >= 0){ N.text += j.v; }
+      return;
+    }
+    // sakhtare OpenAI
+    if (j.choices && j.choices[0]){
+      var d = j.choices[0].delta || j.choices[0].message;
+      if (d){
+        if (typeof d.content === 'string'){ N.text += d.content; }
+        if (typeof d.reasoning_content === 'string'){ N.think += d.reasoning_content; }
+      }
+      if (j.choices[0].finish_reason){ N.done = true; }
+    }
+    if (j.error){ N.err = JSON.stringify(j.error).slice(0, 300); }
   };
-  // hameye block haye feli ra alamat mizanad ta bad az ersal betavanim block e jadid ra tashkhis dahim
+
+  window.__aigateHook = function(){
+    if (N.hooked){ return 'already'; }
+    if (!window.fetch){ return 'no-fetch'; }
+    var origFetch = window.fetch;
+    window.fetch = function(input, init){
+      var url = '';
+      try { url = (typeof input === 'string') ? input : ((input && input.url) || ''); } catch (e){ url = ''; }
+      var isChat = url.indexOf('completion') >= 0 || url.indexOf('/chat/') >= 0;
+      var promise = origFetch.apply(this, arguments);
+      if (!isChat){ return promise; }
+      return promise.then(function(res){
+        try {
+          if (url.indexOf('completion') < 0){ return res; }
+          N.calls++;
+          N.urls.push(url.slice(0, 120));
+          N.status = res.status;
+          N.text = ''; N.think = ''; N.frames = 0; N.done = false; N.err = ''; N.lastPath = '';
+          N.started = Date.now();
+          if (!res.body || !res.body.getReader){ N.done = true; return res; }
+          var clone = res.clone();
+          var reader = clone.body.getReader();
+          var dec = new TextDecoder();
+          var buf = '';
+          var pump = function(){
+            return reader.read().then(function(r){
+              if (r.done){ if (buf){ window.__aigateFrame(buf); } N.done = true; return; }
+              buf += dec.decode(r.value, { stream: true });
+              var idx;
+              while ((idx = buf.indexOf('\n')) >= 0){
+                var line = buf.slice(0, idx);
+                buf = buf.slice(idx + 1);
+                window.__aigateFrame(line);
+              }
+              return pump();
+            });
+          };
+          pump().catch(function(e){ N.err = 'read:' + e; N.done = true; });
+        } catch (e){ N.err = 'hook:' + e; }
+        return res;
+      }).catch(function(e){
+        N.err = 'fetch:' + e;
+        N.done = true;
+        throw e;
+      });
+    };
+    N.hooked = true;
+    return 'hooked';
+  };
+
+  window.__aigateReset = function(){
+    N.text = ''; N.think = ''; N.frames = 0; N.done = false;
+    N.err = ''; N.status = 0; N.calls = 0; N.urls = []; N.lastPath = '';
+    return 'reset';
+  };
+
+  window.__aigateState = function(){
+    return 'status=' + N.status
+      + '\nhooked=' + (N.hooked ? '1' : '0')
+      + '\ndone=' + (N.done ? '1' : '0')
+      + '\nframes=' + N.frames
+      + '\ncalls=' + N.calls
+      + '\nerr=' + (N.err || '')
+      + '\nthinkLen=' + N.think.length
+      + '\n---TEXT---\n' + N.text;
+  };
+
+  // ---------- DOM (faghat fallback) ----------
+  window.__aigateReady = function(){ return inputEl() ? '1' : '0'; };
   window.__aigateMark = function(){
     var list = blocks();
     for (var i = 0; i < list.length; i++){ list[i].setAttribute('data-aigate-seen', '1'); }
-    var th = thinkBlocks();
-    for (var j = 0; j < th.length; j++){ th[j].setAttribute('data-aigate-seen', '1'); }
     return String(list.length);
   };
-  // matn e akharin block e bi-alamat (javab e jadid)
+  window.__aigateMarkAll = function(){
+    var all = document.querySelectorAll('div,p,li,article,section,span');
+    for (var i = 0; i < all.length; i++){
+      all[i].setAttribute('data-aigate-seen', '1');
+      all[i].setAttribute('data-aigate-len', String((all[i].innerText || '').length));
+    }
+    return String(all.length);
+  };
   window.__aigateNew = function(skip){
     var list = blocks();
     var found = null;
@@ -212,31 +351,11 @@ object WebSessionClient {
       var b = list[i];
       if (b.getAttribute('data-aigate-seen') === '1'){ continue; }
       var t = nodeText(b);
-      if (skip && skip.length > 8 && t.replace(/\s+/g, ' ').indexOf(skip) >= 0 && t.length < skip.length + 30){ continue; }
+      if (skip && skip.length > 2 && t.indexOf(skip) >= 0 && t.length < skip.length + 30){ continue; }
       found = b;
     }
-    if (!found){ return ''; }
-    return nodeText(found);
+    return found ? nodeText(found) : '';
   };
-  window.__aigateNewCount = function(){
-    var list = blocks();
-    var n = 0;
-    for (var i = 0; i < list.length; i++){
-      if (list[i].getAttribute('data-aigate-seen') !== '1'){ n++; }
-    }
-    return String(n);
-  };
-  // hameye element haye feli ra alamat mizanad va toole matneshan ra zakhire mikonad
-  window.__aigateMarkAll = function(){
-    var all = document.querySelectorAll('div,p,li,article,section,span');
-    for (var i = 0; i < all.length; i++){
-      all[i].setAttribute('data-aigate-seen', '1');
-      var t = all[i].innerText || '';
-      all[i].setAttribute('data-aigate-len', String(t.length));
-    }
-    return String(all.length);
-  };
-  // raveshe omoomi: har element e jadid ya bozorg-shode ke matn e karbar tooyash nist
   window.__aigateGrown = function(skip){
     var all = document.querySelectorAll('div,p,li,article,section');
     var best = null;
@@ -253,20 +372,15 @@ object WebSessionClient {
       }
       if (t.length > bestLen){ bestLen = t.length; best = e; }
     }
-    if (!best){ return ''; }
-    return nodeText(best);
+    return best ? nodeText(best) : '';
   };
   window.__aigateAnswer = function(skip){
     var t = window.__aigateNew(skip);
     if (t && t.trim().length > 0){ return t; }
     return window.__aigateGrown(skip);
   };
-  window.__aigateTail = function(){
-    var t = (document.body ? (document.body.innerText || '') : '');
-    return t.slice(-160).replace(/\s+/g, ' ');
-  };
   window.__aigateBusy = function(){
-    var all = document.querySelectorAll('div[role="button"], button, [aria-label], [class*="loading"], [class*="Loading"]');
+    var all = document.querySelectorAll('div[role="button"], button, [aria-label], [class*="loading"]');
     for (var i = 0; i < all.length; i++){
       var label = ((all[i].getAttribute('aria-label') || '') + ' ' + (all[i].className || '')).toLowerCase();
       if (label.indexOf('stop') >= 0 || label.indexOf('loading') >= 0){ return '1'; }
@@ -302,6 +416,17 @@ object WebSessionClient {
     el.dispatchEvent(new KeyboardEvent('keypress', opts));
     el.dispatchEvent(new KeyboardEvent('keyup', opts));
     return 'ok';
+  };
+  window.__aigateFindSend = function(){
+    var el = inputEl();
+    var scope = document;
+    if (el){
+      var p = el.parentElement;
+      for (var d = 0; d < 5 && p; d++){ p = p.parentElement; }
+      if (p){ scope = p; }
+    }
+    var cands = scope.querySelectorAll('div[role="button"], button, [aria-disabled]');
+    return String(cands.length);
   };
   window.__aigateClickSend = function(){
     var el = inputEl();
@@ -340,12 +465,76 @@ object WebSessionClient {
     }
     return 'not-found';
   };
+  window.__aigateTail = function(){
+    var t = (document.body ? (document.body.innerText || '') : '');
+    return t.slice(-160).replace(/\s+/g, ' ');
+  };
+  window.__aigateDiag = function(){
+    var el = inputEl();
+    return 'url=' + location.href
+      + ' | input=' + (el ? el.tagName : 'none')
+      + ' | blocks=' + blocks().length
+      + ' | hooked=' + (N.hooked ? '1' : '0')
+      + ' | calls=' + N.calls
+      + ' | frames=' + N.frames
+      + ' | status=' + N.status
+      + ' | netLen=' + N.text.length
+      + ' | bodyLen=' + ((document.body && document.body.innerText) || '').length
+      + ' | tail=' + window.__aigateTail();
+  };
+
+  // ---------- checkup ----------
+  window.__aigateChecks = function(){
+    var out = [];
+    function add(key, ok, detail){
+      out.push(key + '|' + (ok ? '1' : '0') + '|' + String(detail).replace(/[|\n]/g, ' '));
+    }
+    var bodyLen = ((document.body && document.body.innerText) || '').length;
+    add('page', document.readyState !== 'loading' && bodyLen > 50,
+      'readyState=' + document.readyState + ' bodyLen=' + bodyLen);
+    var href = location.href;
+    add('route', href.indexOf('sign_in') < 0 && href.indexOf('login') < 0, 'url=' + href);
+    var token = '';
+    try {
+      for (var i = 0; i < localStorage.length; i++){
+        var k = localStorage.key(i);
+        if (k && k.toLowerCase().indexOf('token') >= 0){ token += k + ' '; }
+      }
+    } catch (e){ token = 'err'; }
+    add('session', (token && token !== 'err') || document.cookie.length > 20,
+      'lsTokens=' + (token || 'none') + ' cookieLen=' + document.cookie.length);
+    var el = inputEl();
+    add('input', !!el, el ? (el.tagName + ' id=' + (el.id || '-')) : 'not found');
+    add('sendbtn', parseInt(window.__aigateFindSend(), 10) > 0, 'candidates=' + window.__aigateFindSend());
+    add('hook', N.hooked, 'hooked=' + (N.hooked ? '1' : '0'));
+    var wasm = 0;
+    try {
+      var res = performance.getEntriesByType('resource');
+      for (var r = 0; r < res.length; r++){
+        if ((res[r].name || '').indexOf('.wasm') >= 0){ wasm++; }
+      }
+    } catch (e){ wasm = -1; }
+    add('wasm', typeof WebAssembly !== 'undefined', 'WebAssembly=' + (typeof WebAssembly) + ' wasmFiles=' + wasm);
+    add('blocks', blocks().length > 0, 'answerBlocks=' + blocks().length);
+    add('calls', N.calls > 0, 'chatRequests=' + N.calls + ' urls=' + N.urls.join(' '));
+    add('stream', N.frames > 0, 'frames=' + N.frames + ' status=' + N.status + ' netLen=' + N.text.length + ' err=' + (N.err || '-'));
+    return out.join('\n');
+  };
+
+  window.__aigateHook();
   return 'installed';
 })();
 """
 
 	private suspend fun install(view: WebView) {
 		eval(view, BOOTSTRAP)
+	}
+
+	private suspend fun ensureAlive(view: WebView) {
+		val alive = eval(view, "(typeof window.__aigateState === 'function' && window.__aigateNet && window.__aigateNet.hooked) ? '1' : '0'")
+		if (alive != "1") {
+			install(view)
+		}
 	}
 
 	private suspend fun waitReady(view: WebView, timeoutMs: Int): Boolean {
@@ -359,6 +548,29 @@ object WebSessionClient {
 		return false
 	}
 
+	private suspend fun readState(view: WebView): StreamState {
+		val raw = eval(view, "window.__aigateState()")
+		val marker = "---TEXT---\n"
+		val index = raw.indexOf(marker)
+		val head = if (index >= 0) raw.substring(0, index) else raw
+		val text = if (index >= 0) raw.substring(index + marker.length) else ""
+		fun field(name: String): String {
+			for (line in head.lines()) {
+				if (line.startsWith(name + "=")) return line.removePrefix(name + "=")
+			}
+			return ""
+		}
+		return StreamState(
+			status = field("status").trim().toIntOrNull() ?: 0,
+			done = field("done").trim() == "1",
+			frames = field("frames").trim().toIntOrNull() ?: 0,
+			calls = field("calls").trim().toIntOrNull() ?: 0,
+			error = field("err").trim(),
+			text = text,
+			think = "",
+		)
+	}
+
 	private fun promptFor(history: List<ChatMessage>): String {
 		val last = history.lastOrNull { it.role == "user" }
 		return last?.activeText?.trim().orEmpty()
@@ -370,15 +582,14 @@ object WebSessionClient {
 		return try {
 			val view = webView(context, url)
 			val ready = waitReady(view, 30000)
-			val diag = eval(view, "window.__aigateDiag()")
-			lastLog = diag
+			lastLog = eval(view, "window.__aigateDiag()")
 			if (ready) {
 				PingResult(true, System.currentTimeMillis() - start, "نشست وب فعال است")
 			} else {
 				PingResult(
 					false,
 					System.currentTimeMillis() - start,
-					"کادر چت پیدا نشد — احتمالاً لاگین نشده‌ای یا کپچا باز است. " + diag,
+					"کادر چت پیدا نشد — احتمالاً لاگین نشده‌ای یا کپچا باز است. " + lastLog,
 				)
 			}
 		} catch (t: Throwable) {
@@ -386,6 +597,7 @@ object WebSessionClient {
 		}
 	}
 
+	/** ersal payam va khandan e javab; aval az shabake, agar nashod az DOM. */
 	fun streamChat(
 		context: Context,
 		provider: Provider,
@@ -404,7 +616,7 @@ object WebSessionClient {
 			lastLog = eval(view, "window.__aigateDiag()")
 			emit(
 				StreamEvent.Failure(
-					"صفحه‌ی سایت آماده نشد. از بخش API‌ها دکمه‌ی «ورود به سایت» را بزن. " + lastLog
+					"صفحه‌ی سایت آماده نشد. از بخش API‌ها «ورود به سایت» را بزن یا چک‌آپ نشست وب را اجرا کن. " + lastLog
 				)
 			)
 			return@flow
@@ -418,11 +630,10 @@ object WebSessionClient {
 			delay(300)
 		}
 
-		// alamat zadane hameye javab ha va element haye ghabli
+		eval(view, "window.__aigateReset()")
 		eval(view, "window.__aigateMark()")
 		eval(view, "window.__aigateMarkAll()")
 
-		// 1) neveshtan
 		val typed = eval(view, "window.__aigateType(" + jsString(prompt) + ")")
 		delay(300)
 		if (typed != "ok" || eval(view, "window.__aigateValue()").isBlank()) {
@@ -431,7 +642,6 @@ object WebSessionClient {
 			return@flow
 		}
 
-		// 2) ersal
 		eval(view, "window.__aigateEnter()")
 		delay(700)
 		var sent = eval(view, "window.__aigateValue()").isBlank()
@@ -451,44 +661,39 @@ object WebSessionClient {
 			return@flow
 		}
 
-		// 3) khandane javab: har block e bi-alamat javabe jadid ast
-		val skip = prompt.replace(Regex("\\s+"), " ").take(40)
-		val skipArg = jsString(skip)
+		val skipArg = jsString(prompt.replace(Regex("\\s+"), " ").take(40))
 		var emitted = ""
-		var stableFor = 0
 		var elapsed = 0
+		var stableFor = 0
 		var started = false
-		var sawAnyBlock = false
+		var httpStatus = 0
 
 		while (elapsed < 300000) {
 			delay(400)
 			elapsed += 400
+			ensureAlive(view)
 
-			// baze safhe (masalan sakhte goftogooye jadid) script ra pak mikonad
-			val alive = eval(view, "typeof window.__aigateNew")
-			if (alive != "function") {
-				install(view)
-				delay(200)
+			val state = readState(view)
+			if (state.status != 0) httpStatus = state.status
+			if (httpStatus >= 400) {
+				lastLog = eval(view, "window.__aigateDiag()")
+				emit(StreamEvent.Failure("سایت خطا داد: HTTP " + httpStatus + " " + state.error + " | " + lastLog))
+				return@flow
 			}
 
-			val newCount = eval(view, "window.__aigateNewCount()").toIntOrNull() ?: 0
-			if (newCount > 0) sawAnyBlock = true
+			var text = state.text
+			if (text.isBlank() && elapsed >= 6000) {
+				// fallback: khandan az DOM
+				text = eval(view, "window.__aigateAnswer(" + skipArg + ")")
+			}
+			text = text.trim()
 
-			val text = eval(view, "window.__aigateAnswer(" + skipArg + ")").trim()
 			if (text.isEmpty()) {
 				if (!started && elapsed > 90000) {
 					lastLog = eval(view, "window.__aigateDiag()")
-					emit(
-						StreamEvent.Failure(
-							"پیام ارسال شد ولی متن پاسخ در صفحه پیدا نشد" +
-								(if (sawAnyBlock) " (بلوک جدید دیده شد ولی خواندنی نبود)" else "") +
-								". " + lastLog
-						)
-					)
+					emit(StreamEvent.Failure("پیام ارسال شد ولی پاسخی نیامد. " + lastLog))
 					return@flow
 				}
-				if (started) stableFor += 400
-				if (started && stableFor >= 8000) break
 				continue
 			}
 
@@ -498,7 +703,6 @@ object WebSessionClient {
 				emitted = text
 				stableFor = 0
 			} else if (text != emitted) {
-				// bazneveshte shod: az avval jaygozin kon
 				emit(StreamEvent.Replace(text))
 				emitted = text
 				stableFor = 0
@@ -506,13 +710,10 @@ object WebSessionClient {
 				stableFor += 400
 			}
 
+			if (state.done && stableFor >= 800) break
 			val busy = eval(view, "window.__aigateBusy()") == "1"
-			if (busy) {
-				if (stableFor > 4000) stableFor = 4000
-			} else if (stableFor >= 2000) {
-				break
-			}
-			if (stableFor >= 10000) break
+			if (!busy && stableFor >= 2400) break
+			if (stableFor >= 12000) break
 		}
 
 		persistCookies()
@@ -542,11 +743,85 @@ object WebSessionClient {
 			}
 		}
 		val error = failure
-		return if (text.isNotEmpty()) {
-			Result.success(text)
-		} else {
-			Result.failure(IllegalStateException(error ?: "پاسخی دریافت نشد"))
+		return if (text.isNotEmpty()) Result.success(text)
+		else Result.failure(IllegalStateException(error ?: "پاسخی دریافت نشد"))
+	}
+
+	private fun titleFor(key: String): String = when (key) {
+		"page" -> "۱. بارگذاری صفحه در وب‌ویو"
+		"route" -> "۲. آدرس صفحه (ریدایرکت لاگین)"
+		"session" -> "۳. توکن نشست و کوکی"
+		"input" -> "۴. کادر نوشتن پیام"
+		"sendbtn" -> "۵. دکمه‌ی ارسال"
+		"hook" -> "۶. شنود شبکه (fetch)"
+		"wasm" -> "۷. WebAssembly و PoW سایت"
+		"blocks" -> "۸. بلوک‌های پاسخ در صفحه"
+		"calls" -> "۹. درخواست‌های چت ثبت‌شده"
+		"stream" -> "۱۰. فریم‌های استریم پاسخ"
+		else -> key
+	}
+
+	/** system e checkup: dah marhale ra test mikonad va gozaresh midahad. */
+	suspend fun runDiagnostics(
+		context: Context,
+		provider: Provider,
+		liveTest: Boolean = true,
+	): List<WebCheck> {
+		val results = ArrayList<WebCheck>()
+		val url = provider.baseUrl.ifBlank { DEFAULT_SITE }
+		val view = try {
+			webView(context, url)
+		} catch (t: Throwable) {
+			results.add(WebCheck("۰. ساخت وب‌ویو", false, t.message ?: "خطا"))
+			return results
 		}
+
+		results.add(
+			WebCheck(
+				"۰. وب‌ویو زنده و متصل",
+				host != null,
+				if (host != null) "وب‌ویوی متصل به صفحه فعال است" else "فقط وب‌ویوی پشتیبان — یک API از نوع نشست وب بساز",
+			)
+		)
+
+		val ready = waitReady(view, 25000)
+		if (liveTest && ready) {
+			// yek payam koochak ersal kon ta zanjire kamel test shavad
+			val probe = listOf(ChatMessage(role = "user", content = "سلام، فقط بنویس: تست"))
+			val outcome = try {
+				complete(context, provider, provider.defaultModel, probe)
+			} catch (t: Throwable) {
+				Result.failure<String>(t)
+			}
+			val raw = eval(view, "window.__aigateChecks()")
+			for (line in raw.lines()) {
+				val parts = line.split("|")
+				if (parts.size < 3) continue
+				results.add(WebCheck(titleFor(parts[0]), parts[1] == "1", parts[2]))
+			}
+			results.add(
+				WebCheck(
+					"۱۱. تست کامل ارسال و دریافت",
+					outcome.isSuccess,
+					outcome.fold(
+						onSuccess = { "پاسخ گرفته شد: " + it.take(120) },
+						onFailure = { it.message ?: "خطا" },
+					),
+				)
+			)
+		} else {
+			val raw = eval(view, "window.__aigateChecks()")
+			for (line in raw.lines()) {
+				val parts = line.split("|")
+				if (parts.size < 3) continue
+				results.add(WebCheck(titleFor(parts[0]), parts[1] == "1", parts[2]))
+			}
+			if (!ready) {
+				results.add(WebCheck("۱۱. تست کامل ارسال و دریافت", false, "چون کادر چت آماده نشد اجرا نشد"))
+			}
+		}
+		persistCookies()
+		return results
 	}
 
 	fun release() {

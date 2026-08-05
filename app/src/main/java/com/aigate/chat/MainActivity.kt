@@ -33,6 +33,7 @@ import com.aigate.chat.ui.LockScreen
 import com.aigate.chat.ui.ProvidersScreen
 import com.aigate.chat.ui.SearchScreen
 import com.aigate.chat.ui.SettingsScreen
+import com.aigate.chat.ui.WebDiagnosticsScreen
 import com.aigate.chat.ui.WebLoginScreen
 import com.aigate.chat.ui.WebSessionHost
 import com.aigate.chat.ui.collectAsStateCompat
@@ -115,10 +116,14 @@ class MainActivity : FragmentActivity() {
 										webLoginUrl = url
 										navController.navigate("weblogin")
 									},
+									onOpenWebCheck = { navController.navigate("webcheck") },
 								)
 							}
 							composable("weblogin") {
 								WebLoginScreen(url = webLoginUrl, onBack = { navController.popBackStack() })
+							}
+							composable("webcheck") {
+								WebDiagnosticsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
 							}
 							composable("settings") {
 								SettingsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })

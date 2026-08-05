@@ -98,6 +98,7 @@ fun ProvidersScreen(
 	viewModel: ChatViewModel,
 	onBack: () -> Unit,
 	onOpenWebLogin: (String) -> Unit = {},
+	onOpenWebCheck: () -> Unit = {},
 ) {
 	val state by viewModel.state.collectAsStateCompat()
 	val haptics = rememberHaptics(state.settings.hapticsEnabled)
@@ -196,6 +197,16 @@ fun ProvidersScreen(
 								onClick = {
 									haptics.tap()
 									onOpenWebLogin(baseUrl.ifBlank { WebSessionClient.DEFAULT_SITE })
+								},
+							)
+							Spacer(Modifier.height(8.dp))
+							NeoButton(
+								text = "چک‌آپ نشست وب (۱۰ مرحله)",
+								containerColor = MaterialTheme.colorScheme.secondary,
+								contentColor = MaterialTheme.colorScheme.onSecondary,
+								onClick = {
+									haptics.tap()
+									onOpenWebCheck()
 								},
 							)
 						}
